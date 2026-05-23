@@ -1,9 +1,13 @@
 version: "3.9"
 
-x-common-env: &common-env
+# Общие переменные окружения для всех Celery-компонентов
+x-celery-env: &celery-env
   REDIS_URL: redis://redis:6379/0
   CORE_API_URL: http://core:8000
   INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-INTERNAL_CHANGE_ME}
+  SUBFINDER_BIN: /usr/local/bin/subfinder
+  NUCLEI_BIN: /usr/local/bin/nuclei
+  GITLEAKS_BIN: /usr/local/bin/gitleaks
 
 services:
   # ─── Инфраструктура ─────────────────────────────────────────────────────────
@@ -18,16 +22,19 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U easm"]
+      test: ["CMD-SHELL", "pg_isready -U easm -d easm"]
       interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
+      start_period: 15s
+    # В production НЕ открывать 5432 наружу — только internal сеть
+    # ports:
+    #   - "5432:5432"
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
     volumes:
       - redis_data:/data
     healthcheck:
@@ -35,8 +42,120 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
+    # В production НЕ открывать 6379 наружу
+    # ports:
+    #   - "6379:6379"
+
+  # ─── Control Plane (FastAPI) ─────────────────────────────────────────────────
+
+  core:
+    build:
+      context: ./core
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://easm:${POSTGRES_PASSWORD:-easm}@postgres:5432/easm
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-INTERNAL_CHANGE_ME}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@example.com}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-changeme}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "6379:6379"
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ─── Data Plane — Celery Worker ──────────────────────────────────────────────
+
+  worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: >
+      celery -A workers.celery_app worker
+      --loglevel=info
+      --queues=default,discovery,scanning,osint,parsing
+      --concurrency=4
+      --hostname=worker@%h
+    env_file:
+      - .env
+    environment:
+      <<: *celery-env
+    depends_on:
+      core:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A workers.celery_app inspect ping -d worker@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      replicas: 2
+
+  # ─── Data Plane — Celery Beat (планировщик) ──────────────────────────────────
+
+  beat:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: >
+      celery -A workers.celery_app beat
+      --loglevel=info
+      --scheduler celery.beat:PersistentScheduler
+      --schedule /tmp/celerybeat-schedule
+    env_file:
+      - .env
+    environment:
+      <<: *celery-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Beat должен запускаться в единственном экземпляре
+    # (дублирование beat приводит к двойной отправке задач)
+
+  # ─── Celery Flower — мониторинг задач ────────────────────────────────────────
+
+  flower:
+    image: mher/flower:2.0
+    restart: unless-stopped
+    command: >
+      celery --broker=redis://redis:6379/0 flower
+      --port=5555
+      --url_prefix=flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-flowerpass}
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5555/flower/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ─── OpenSearch (опционально, для поиска по событиям) ────────────────────────
 
   opensearch:
     image: opensearchproject/opensearch:2.14.0
@@ -48,70 +167,18 @@ services:
     volumes:
       - opensearch_data:/usr/share/opensearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\\|yellow\"'"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 40s
     ports:
       - "9200:9200"
 
-  # ─── Control Plane ──────────────────────────────────────────────────────────
-
-  core:
-    build:
-      context: ./core
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      <<: *common-env
-      DATABASE_URL: postgresql+asyncpg://easm:${POSTGRES_PASSWORD:-easm}@postgres:5432/easm
-      OPENSEARCH_URL: http://opensearch:9200
-      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION}
-      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@example.com}
-      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-changeme}
-    ports:
-      - "8000:8000"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-
-  # ─── Data Plane (Celery) ────────────────────────────────────────────────────
-
-  worker:
-    build:
-      context: ./workers
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      core:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      <<: *common-env
-    deploy:
-      replicas: 2
-
-  flower:
-    image: mher/flower:2.0
-    restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-    environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
-      FLOWER_PORT: 5555
-    ports:
-      - "5555:5555"
-
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
   opensearch_data:
+    driver: local

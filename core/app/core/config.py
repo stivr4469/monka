@@ -1,9 +1,14 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # БД
     DATABASE_URL: str = "postgresql+asyncpg://easm:easm@postgres:5432/easm"
@@ -20,7 +25,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # Внутренний ключ для воркеров → Core
+    # Внутренний ключ для воркеров -> Core
     INTERNAL_API_SECRET: str = "INTERNAL_CHANGE_ME"
 
     # Первый суперпользователь (создаётся при старте)
@@ -30,10 +35,37 @@ class Settings(BaseSettings):
     # GitHub поиск (опционально)
     GITHUB_TOKEN: str = ""
 
+    # HaveIBeenPwned API ключ (опционально, без ключа - ограниченный доступ)
+    HIBP_API_KEY: str = ""
+
+    # Telegram Bot API токен для алертов
+    TELEGRAM_BOT_TOKEN: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
+    """
+    Lazy-инициализация настроек с кэшированием.
+    lru_cache гарантирует один объект Settings на весь процесс.
+    Тесты могут сбрасывать кэш через get_settings.cache_clear().
+    Инициализация НЕ происходит при импорте модуля — только при первом вызове.
+    """
     return Settings()
 
 
-settings = get_settings()
+class _SettingsProxy:
+    """
+    Прокси для обратной совместимости: from app.core.config import settings.
+    Делегирует все атрибуты к get_settings() без eager-инициализации на импорте.
+    Это позволяет тестам переопределять переменные окружения до первого чтения.
+    """
+
+    def __getattr__(self, name: str):
+        return getattr(get_settings(), name)
+
+    def __repr__(self) -> str:
+        return repr(get_settings())
+
+
+# Алиас для удобного импорта. Значение вычисляется лениво при первом обращении.
+settings = _SettingsProxy()

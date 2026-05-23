@@ -13,3 +13,4 @@ class Organization(Base, TimestampMixin):
 
     users: Mapped[list["User"]] = relationship(back_populates="organization")  # type: ignore[name-defined]  # noqa: F821
     assets: Mapped[list["Asset"]] = relationship(back_populates="organization")  # type: ignore[name-defined]  # noqa: F821
+    scan_schedules: Mapped[list["ScanSchedule"]] = relationship(back_populates="organization", lazy="noload")  # type: ignore[name-defined]  # noqa: F821

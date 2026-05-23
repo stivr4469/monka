@@ -142,3 +142,35 @@ def search_github(
         "sent": sent,
         "errors": errors,
     }
+
+
+# ── Celery-обёртка ────────────────────────────────────────────────────────────
+
+try:
+    from workers.celery_app import app as _celery_app
+    from workers.config import settings as _settings
+
+    @_celery_app.task(
+        bind=True,
+        max_retries=2,
+        default_retry_delay=300,
+        name="workers.tasks.github_search.search_github_task",
+    )
+    def search_github_task(self, domain: str) -> dict:
+        """
+        Celery-задача: поиск упоминаний домена в GitHub.
+        Использует GITHUB_TOKEN из конфигурации воркера.
+        """
+        try:
+            return search_github(
+                domain=domain,
+                github_token=_settings.GITHUB_TOKEN,
+                core_api_url=_settings.CORE_API_URL,
+                internal_secret=_settings.INTERNAL_API_SECRET,
+            )
+        except Exception as exc:
+            raise self.retry(exc=exc)
+
+except ImportError:
+    # Celery не установлен — модуль используется без воркера (тесты и т.д.)
+    pass

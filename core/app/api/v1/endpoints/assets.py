@@ -10,6 +10,7 @@ from app.schemas.asset import AssetCreate, AssetRead, AssetUpdate
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
+# ThreadPoolExecutor живёт на уровне модуля — переиспользуется между запросами
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
@@ -43,9 +44,14 @@ async def create_asset(
     await db.commit()
     await db.refresh(asset)
 
-    # Автозапуск сканирования в фоне — пользователь получает ответ немедленно
+    # Определяем порт для формирования ingest URL внутри воркера
     port = request.url.port or 8000
-    background_tasks.add_task(_executor.submit, run_subfinder, body.domain, port)
+
+    # Правильное использование BackgroundTasks: передаём синхронную функцию напрямую.
+    # BackgroundTasks вызывает её в отдельном потоке через anyio.to_thread.run_sync.
+    # _executor.submit НЕ передаётся как первый аргумент — это было бы передачей
+    # метода submit как callable, что возвращало бы Future без реального выполнения.
+    background_tasks.add_task(run_subfinder, body.domain, port)
 
     return asset
 

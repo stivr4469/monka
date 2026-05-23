@@ -3,3 +3,5 @@ from app.models.user import User  # noqa: F401
 from app.models.organization import Organization  # noqa: F401
 from app.models.asset import Asset  # noqa: F401
 from app.models.event import Event  # noqa: F401
+from app.models.alert_rule import AlertRule  # noqa: F401
+from app.models.scan_schedule import ScanSchedule  # noqa: F401

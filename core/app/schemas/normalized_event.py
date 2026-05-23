@@ -13,6 +13,8 @@ class EventType(str, Enum):
     SECRET_LEAK = "secret_leak"
     EXPOSED_SERVICE = "exposed_service"
     STEALER_LOG = "stealer_log"
+    EMAIL_BREACH = "email_breach"
+    GITHUB_LEAK = "github_leak"
 
 
 class Severity(str, Enum):
@@ -29,6 +31,8 @@ class SourceType(str, Enum):
     GITLEAKS = "gitleaks"
     STEALER_LOG = "stealer_log"
     MANUAL = "manual"
+    BREACH_CHECKER = "breach_checker"
+    GITHUB_SEARCH = "github_search"
 
 
 class NormalizedEvent(BaseModel):
@@ -45,7 +49,15 @@ class NormalizedEvent(BaseModel):
 
     @model_validator(mode="after")
     def compute_dedup_hash(self) -> "NormalizedEvent":
-        raw = f"{self.source_type}|{self.target_domain}|{json.dumps(self.payload, sort_keys=True)}"
+        # Хэш считается от (event_type + target_domain + source_name + json(payload sorted_keys))
+        # Это гарантирует дедупликацию одинаковых находок от одного источника на одном домене,
+        # но допускает разные события одного типа с разными payload.
+        raw = (
+            f"{self.event_type}|"
+            f"{self.target_domain}|"
+            f"{self.source_name}|"
+            f"{json.dumps(self.payload, sort_keys=True)}"
+        )
         self.dedup_hash = hashlib.sha256(raw.encode()).hexdigest()
         return self
 

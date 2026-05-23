@@ -1,5 +1,12 @@
+import sys
 import uuid
+from pathlib import Path
 from typing import AsyncGenerator
+
+# Добавляем workers в sys.path чтобы тесты парсера видели tasks.*
+_workers_path = str(Path(__file__).parents[2] / "workers")
+if _workers_path not in sys.path:
+    sys.path.insert(0, _workers_path)
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

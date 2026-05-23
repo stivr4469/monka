@@ -9,6 +9,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db import AsyncSessionLocal, engine
+from app.middleware.logging_middleware import LoggingMiddleware
 from app.models.base import Base
 from app.models.organization import Organization
 from app.models.user import User
@@ -54,6 +55,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Middleware добавляются в обратном порядке (LIFO) — LoggingMiddleware
+# должна быть последней добавленной чтобы обернуть все запросы первой
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -61,6 +64,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Middleware структурированного логирования
+app.add_middleware(LoggingMiddleware)
 
 app.include_router(api_router)
 
