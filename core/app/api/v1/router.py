@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     paste_scan,
     scheduled_scan,
     stealer,
+    stealer_sources,
     telegram_scan,
 )
 
@@ -35,8 +36,9 @@ api_router.include_router(paste_scan.router)
 api_router.include_router(telegram_scan.router)
 api_router.include_router(darknet_scan.router)
 
-# Загрузка файлов
+# Стилер-логи: загрузка файлов + автоматические источники
 api_router.include_router(stealer.router)
+api_router.include_router(stealer_sources.router)
 
 # Алерты
 api_router.include_router(alerts.router)

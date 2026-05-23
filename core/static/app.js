@@ -1126,6 +1126,79 @@ async function handleStealerUpload() {
   }
 }
 
+// ─────────────────────────────────────────────
+// Проверка по источникам стилер-логов
+// ─────────────────────────────────────────────
+
+async function handleStealerSources() {
+  const domainInput = document.getElementById('sources-domain');
+  const btn         = document.getElementById('stealer-sources-btn');
+  const resultEl    = document.getElementById('stealer-sources-result');
+  const domain      = domainInput.value.trim();
+
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен');
+    domainInput.focus();
+    return;
+  }
+
+  setLoading(btn, true);
+  resultEl.style.display = 'none';
+
+  try {
+    const res  = await API.request('/api/v1/scan/stealer-sources', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res) return;
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+
+    const sources = data.sources || {};
+    const rows = Object.entries(sources).map(([k, v]) => {
+      const active = !v.includes('нет');
+      return `<div style="display:flex;justify-content:space-between;padding:.3rem 0;
+                          border-bottom:1px solid rgba(255,255,255,.04);font-size:.8125rem">
+        <span style="color:var(--text-secondary)">${escHtml(k)}</span>
+        <span style="color:${active ? '#3fb950' : '#d29922'}">${escHtml(v)}</span>
+      </div>`;
+    }).join('');
+
+    resultEl.innerHTML = `
+      <div style="background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.25);
+                  border-radius:8px;padding:.875rem 1rem;margin-top:.5rem">
+        <div style="color:#58a6ff;font-weight:600;margin-bottom:.5rem">
+          ✓ Запрос отправлен — ${escHtml(domain)}
+        </div>
+        ${rows}
+        <div style="color:var(--text-muted);font-size:.75rem;margin-top:.6rem">
+          Результаты появятся в
+          <button class="btn btn-ghost btn-sm" onclick="switchTab('events')"
+                  style="padding:0;text-decoration:underline;color:var(--accent)">
+            Events → stealer_log
+          </button>
+        </div>
+      </div>`;
+    resultEl.style.display = 'block';
+
+    Toast.show('success', 'Источники опрошены', domain);
+
+  } catch (err) {
+    resultEl.innerHTML = `
+      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);
+                  border-radius:8px;padding:.875rem 1rem;color:#f85149;font-size:.875rem">
+        ✗ ${escHtml(err.message)}
+      </div>`;
+    resultEl.style.display = 'block';
+    Toast.show('error', 'Ошибка запроса', err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 // Старт после загрузки DOM
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

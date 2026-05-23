@@ -13,8 +13,8 @@
   3. Трёхпольный (url:login:password):
        https://example.com:user@example.com:secret123
 
-Пароли МАСКИРУЮТСЯ в воркере до отправки в Core API.
-В БД попадает только маска — никогда не сырой пароль.
+Пароли хранятся в БД как есть — это OSINT-инструмент, цель которого
+показать реальную степень компрометации.
 """
 import io
 import logging
@@ -26,19 +26,6 @@ from urllib.parse import urlparse
 import httpx
 
 logger = logging.getLogger(__name__)
-
-# ──────────────────────────────────────────────
-# Маскирование
-# ──────────────────────────────────────────────
-
-def mask_password(pwd: str) -> str:
-    """sec****23 — показываем первые 3 и последние 2 символа."""
-    if not pwd:
-        return "***"
-    if len(pwd) <= 5:
-        return "*" * len(pwd)
-    return pwd[:3] + "*" * (len(pwd) - 5) + pwd[-2:]
-
 
 # ──────────────────────────────────────────────
 # Парсеры форматов
@@ -169,8 +156,8 @@ def parse_stealer_log(
     internal_secret: str,
 ) -> dict:
     """
-    Парсит стилер-лог (ZIP или TXT), сопоставляет с доменами,
-    маскирует пароли и отправляет события в Core API.
+    Парсит стилер-лог (ZIP или TXT), сопоставляет с доменами
+    и отправляет события в Core API.
 
     Возвращает: {"parsed": N, "matched": M, "sent": K, "errors": E}
     """
@@ -209,7 +196,6 @@ def parse_stealer_log(
                     continue
 
                 matched += 1
-                masked = mask_password(rec.get("password", ""))
 
                 event = {
                     "event_type": "stealer_log",
@@ -220,7 +206,7 @@ def parse_stealer_log(
                     "payload": {
                         "url": rec.get("url", ""),
                         "login": rec.get("login", ""),
-                        "password_masked": masked,  # НИКОГДА не сырой пароль
+                        "password": rec.get("password", ""),
                         "source_file": src_filename,
                     },
                 }
