@@ -1131,10 +1131,11 @@ async function handleStealerUpload() {
 // ─────────────────────────────────────────────
 
 async function handleStealerSources() {
-  const domainInput = document.getElementById('sources-domain');
-  const btn         = document.getElementById('stealer-sources-btn');
-  const resultEl    = document.getElementById('stealer-sources-result');
-  const domain      = domainInput.value.trim();
+  const domainInput   = document.getElementById('sources-domain');
+  const extraTgInput  = document.getElementById('sources-extra-tg');
+  const btn           = document.getElementById('stealer-sources-btn');
+  const resultEl      = document.getElementById('stealer-sources-result');
+  const domain        = domainInput.value.trim();
 
   if (!domain) {
     Toast.show('warning', 'Укажите домен');
@@ -1142,13 +1143,18 @@ async function handleStealerSources() {
     return;
   }
 
+  const extraRaw = extraTgInput ? extraTgInput.value.trim() : '';
+  const extra_tg_channels = extraRaw
+    ? extraRaw.split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean)
+    : [];
+
   setLoading(btn, true);
   resultEl.style.display = 'none';
 
   try {
     const res  = await API.request('/api/v1/scan/stealer-sources', {
       method: 'POST',
-      body: JSON.stringify({ domain }),
+      body: JSON.stringify({ domain, extra_tg_channels }),
     });
     if (!res) return;
     const data = await res.json();
@@ -1159,11 +1165,11 @@ async function handleStealerSources() {
 
     const sources = data.sources || {};
     const rows = Object.entries(sources).map(([k, v]) => {
-      const active = !v.includes('нет');
+      const active = !String(v).includes('нет');
       return `<div style="display:flex;justify-content:space-between;padding:.3rem 0;
                           border-bottom:1px solid rgba(255,255,255,.04);font-size:.8125rem">
         <span style="color:var(--text-secondary)">${escHtml(k)}</span>
-        <span style="color:${active ? '#3fb950' : '#d29922'}">${escHtml(v)}</span>
+        <span style="color:${active ? '#3fb950' : '#d29922'}">${escHtml(String(v))}</span>
       </div>`;
     }).join('');
 

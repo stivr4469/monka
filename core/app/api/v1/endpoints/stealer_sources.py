@@ -1,13 +1,18 @@
 """
 Эндпоинт запуска проверки по автоматическим источникам стилер-логов.
 
-Опрашивает Hudson Rock Cavalier (бесплатно), Snusbase и LeakCheck
-(требуют ключи SNUSBASE_API_KEY / LEAKCHECK_API_KEY в .env).
+Источники:
+  - Hudson Rock Cavalier     — бесплатно, без ключа
+  - Snusbase                 — SNUSBASE_API_KEY в .env
+  - LeakCheck                — LEAKCHECK_API_KEY в .env
+  - Telegram-каналы (25+)   — скрейпинг t.me/s/, без ключа
+
 Результаты появляются в /api/v1/events/?event_type=stealer_log
 """
 import concurrent.futures
 import sys
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, field_validator
@@ -34,6 +39,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 
 class StealerSourcesRequest(BaseModel):
     domain: str
+    extra_tg_channels: Optional[list[str]] = None
 
     @field_validator("domain")
     @classmethod
@@ -47,10 +53,17 @@ class StealerSourcesRequest(BaseModel):
             raise ValueError("Укажите корректный домен, например example.com")
         return v
 
+    @field_validator("extra_tg_channels", mode="before")
+    @classmethod
+    def clean_channels(cls, v):
+        if not v:
+            return []
+        return [c.strip().lstrip("@") for c in v if c and c.strip()]
+
 
 @router.post(
     "/stealer-sources",
-    summary="Проверка по источникам стилер-логов (Hudson Rock, Snusbase, LeakCheck)",
+    summary="Проверка по источникам стилер-логов",
 )
 async def run_stealer_sources(
     body: StealerSourcesRequest,
@@ -70,18 +83,19 @@ async def run_stealer_sources(
         domain,
         core_api_url,
         settings.INTERNAL_API_SECRET,
+        body.extra_tg_channels or [],
     )
 
     return {
         "status": "started",
         "domain": domain,
         "message": (
-            "Проверка запущена по источникам: Hudson Rock Cavalier, Snusbase, LeakCheck. "
-            "Результаты появятся в Events → stealer_log"
+            "Проверка запущена. Результаты появятся в Events → stealer_log"
         ),
         "sources": {
-            "hudsonrock": "всегда активен",
-            "snusbase": "активен при наличии SNUSBASE_API_KEY",
-            "leakcheck": "активен при наличии LEAKCHECK_API_KEY",
+            "hudsonrock":        "всегда активен",
+            "snusbase":          "активен при наличии SNUSBASE_API_KEY",
+            "leakcheck":         "активен при наличии LEAKCHECK_API_KEY",
+            "telegram_channels": "25+ каналов, всегда активны (t.me/s/)",
         },
     }

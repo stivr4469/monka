@@ -232,12 +232,15 @@ def query_stealer_sources(
     domain: str,
     core_api_url: str,
     internal_secret: str,
+    extra_tg_channels: list[str] | None = None,
 ) -> dict:
     """
     Опрашивает все доступные источники для домена и ингестит результаты.
 
     Возвращает сводку: {source: {found, sent, errors}, ...}
     """
+    from tasks.stealer_tg_channels import scan_tg_stealer_channels
+
     snusbase_key = os.getenv("SNUSBASE_API_KEY", "")
     leakcheck_key = os.getenv("LEAKCHECK_API_KEY", "")
 
@@ -282,8 +285,24 @@ def query_stealer_sources(
     else:
         summary["leakcheck"] = {"found": 0, "sent": 0, "errors": 0, "skip": "нет LEAKCHECK_API_KEY"}
 
-    total_found = sum(v["found"] for v in summary.values())
-    total_sent = sum(v["sent"] for v in summary.values())
+    # ── Telegram-каналы со стилер-логами (всегда)
+    tg_summary = scan_tg_stealer_channels(
+        domain, core_api_url, internal_secret, extra_tg_channels
+    )
+    tg_matched = sum(v["matched"] for v in tg_summary.values())
+    tg_sent    = sum(v["sent"]    for v in tg_summary.values())
+    summary["telegram_channels"] = {
+        "channels_checked": len(tg_summary),
+        "matched": tg_matched,
+        "sent":    tg_sent,
+        "detail":  tg_summary,
+    }
+
+    total_found = sum(
+        v.get("found", v.get("matched", 0)) for v in summary.values()
+        if isinstance(v, dict) and "skip" not in v
+    )
+    total_sent = sum(v.get("sent", 0) for v in summary.values())
     logger.info(
         "[stealer_sources] %s: найдено=%d отправлено=%d",
         domain, total_found, total_sent,
