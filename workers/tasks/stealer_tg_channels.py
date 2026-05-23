@@ -1,27 +1,40 @@
 """
-Мониторинг Telegram-каналов с дампами стилер-логов.
+Мониторинг Telegram-каналов со стилер-логами через Telethon (MTProto).
 
-Скрейпит публичные каналы через t.me/s/{channel} (без API-ключа),
-извлекает из текста постов строки в формате combo-list и url:login:pass,
-фильтрует по целевому домену и ингестит совпадения в Core API.
+Почему не t.me/s/ (веб-скрейпинг):
+  - Большинство каналов со стилерами не имеют публичной истории сообщений
+    → t.me/s/channel редиректит на t.me/channel, посты недоступны
+  - Реальные логи шарятся как файловые вложения (ZIP/TXT), а не текст постов
+  - Текстовый скрейпинг t.me/s/ не даёт учётных данных
 
-Каналы добавляются в STEALER_TG_CHANNELS или через env STEALER_TG_EXTRA.
+Для работы нужно:
+  1. Получить API_ID и API_HASH на https://my.telegram.org
+  2. Установить: pip install telethon
+  3. Добавить в core/.env:
+       TELEGRAM_API_ID=12345678
+       TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
+  4. Первый запуск создаст файл сессии (одноразовая авторизация по SMS)
+
+Известные каналы со стилер-логами (проверять актуальность):
+  Файловые дампы:
+    @freelogs_shop, @stealerlogs, @freeclouds, @logs_mafia
+    @raccoon_logs_free, @redline_logs_free, @vidar_logs_channel
+    @LummaC2Logs, @MetaStealer_logs, @StealC_logs
+  Combo-листы:
+    @freecombolist, @combo_logs_free, @logs_free_club
+    @freeredlinelogs, @leakednation
+
+  Большинство реальных каналов — приватные или со скрытой историей.
+  Доступ возможен только через полноценный Telegram-клиент (Telethon/Pyrogram).
 """
 import logging
-import re
-import time
-from urllib.parse import urlparse
-
-import httpx
+import os
+import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────
-# Список публично известных каналов со стилер-логами
-# ─────────────────────────────────────────────────────────
-
 STEALER_TG_CHANNELS: list[str] = [
-    # Крупные агрегаторы логов (публичные)
     "freelogs_shop",
     "stealerlogs",
     "freeclouds",
@@ -33,207 +46,32 @@ STEALER_TG_CHANNELS: list[str] = [
     "redline_logs_free",
     "raccoon_logs_free",
     "vidar_logs_channel",
-    "logs_stealer",
-    "dark_logs",
-    "free_logs_combo",
-    "leakbase_io",
-    "leakednation",
-    "databreach_logs",
-    # Разбивка по стилерам
-    "RedLineStealer",
-    "RaccoonStealer",
     "LummaC2Logs",
     "MetaStealer_logs",
     "StealC_logs",
-    # Англоязычные агрегаторы
-    "leaksworldwide",
-    "worldleaks",
-    "cyberleaks_cc",
+    "leakednation",
 ]
 
-_CACHE: dict[str, tuple[float, list[dict]]] = {}
-_CACHE_TTL = 1800  # 30 минут — каналы обновляются часто
+_TELETHON_AVAILABLE = False
 
-_TIMEOUT = 15
-_POSTS_LIMIT = 50  # последних постов
-
-# ─────────────────────────────────────────────────────────
-# Скрейпинг t.me/s/{channel}
-# ─────────────────────────────────────────────────────────
-
-def _fetch_channel_text(channel: str) -> list[str]:
-    """
-    Загружает HTML t.me/s/{channel} и вытаскивает текст всех постов.
-    Возвращает список строк из тел постов.
-    """
-    try:
-        r = httpx.get(
-            f"https://t.me/s/{channel}",
-            timeout=_TIMEOUT,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; EASM-Monitor/1.0)",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            follow_redirects=True,
-        )
-        if r.status_code != 200:
-            logger.debug("[tg-stealer] %s → HTTP %d", channel, r.status_code)
-            return []
-
-        # Извлекаем текст постов из div.tgme_widget_message_text
-        raw_texts = re.findall(
-            r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
-            r.text,
-            re.DOTALL | re.IGNORECASE,
-        )
-
-        result = []
-        for html_block in raw_texts:
-            # Убираем HTML-теги
-            text = re.sub(r"<[^>]+>", " ", html_block)
-            # Декодируем HTML-entities
-            text = (text
-                    .replace("&amp;", "&")
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&quot;", '"')
-                    .replace("&#39;", "'")
-                    .replace("&nbsp;", " "))
-            text = text.strip()
-            if text:
-                result.append(text)
-
-        return result
-
-    except Exception as exc:
-        logger.debug("[tg-stealer] %s: ошибка скрейпинга — %s", channel, exc)
-        return []
+try:
+    from telethon.sync import TelegramClient
+    from telethon import events
+    _TELETHON_AVAILABLE = True
+except ImportError:
+    pass
 
 
-# ─────────────────────────────────────────────────────────
-# Парсеры форматов из текста постов
-# ─────────────────────────────────────────────────────────
+def _check_setup() -> str | None:
+    """Возвращает строку с описанием проблемы или None если всё готово."""
+    if not _TELETHON_AVAILABLE:
+        return "telethon не установлен: pip install telethon"
+    if not os.getenv("TELEGRAM_API_ID"):
+        return "нет TELEGRAM_API_ID в .env (получить на https://my.telegram.org)"
+    if not os.getenv("TELEGRAM_API_HASH"):
+        return "нет TELEGRAM_API_HASH в .env (получить на https://my.telegram.org)"
+    return None
 
-_URL_RE = re.compile(
-    r'https?://[^\s:]+',
-    re.IGNORECASE,
-)
-
-_COMBO_RE = re.compile(
-    r'(?P<login>[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})'
-    r':'
-    r'(?P<password>\S{4,})',
-)
-
-_THREE_RE = re.compile(
-    r'(?P<url>https?://[^\s:]+)'
-    r'[:|]'
-    r'(?P<login>[^\s:]+)'
-    r':'
-    r'(?P<password>\S{4,})',
-)
-
-
-def _parse_post_text(text: str) -> list[dict]:
-    """
-    Пытается извлечь учётные данные из текста поста.
-    Поддерживает url:login:pass и combo (email:pass).
-    """
-    records = []
-
-    # Трёхпольный формат
-    for m in _THREE_RE.finditer(text):
-        records.append({
-            "url":      m.group("url"),
-            "login":    m.group("login"),
-            "password": m.group("password"),
-        })
-
-    # Combo email:pass (если трёхпольный ничего не дал или дополнительно)
-    if not records:
-        for m in _COMBO_RE.finditer(text):
-            records.append({
-                "url":      "",
-                "login":    m.group("login"),
-                "password": m.group("password"),
-            })
-
-    return records
-
-
-# ─────────────────────────────────────────────────────────
-# Сопоставление с доменом
-# ─────────────────────────────────────────────────────────
-
-def _domain_from_url(url: str) -> str:
-    """Извлекает hostname без www."""
-    try:
-        host = urlparse(url).hostname or ""
-        return host.removeprefix("www.")
-    except Exception:
-        return ""
-
-
-def _domain_from_login(login: str) -> str:
-    """Извлекает домен из email."""
-    if "@" in login:
-        return login.split("@", 1)[-1].lower()
-    return ""
-
-
-def _matches(rec: dict, target: str) -> bool:
-    url_domain   = _domain_from_url(rec.get("url", ""))
-    login_domain = _domain_from_login(rec.get("login", ""))
-    for d in (url_domain, login_domain):
-        if d and (d == target or d.endswith("." + target)):
-            return True
-    return False
-
-
-# ─────────────────────────────────────────────────────────
-# Отправка в Core API
-# ─────────────────────────────────────────────────────────
-
-def _ingest(
-    records: list[dict],
-    channel: str,
-    domain: str,
-    core_api_url: str,
-    internal_secret: str,
-) -> tuple[int, int]:
-    url = f"{core_api_url}/api/v1/internal/ingest"
-    headers = {"Authorization": f"Bearer {internal_secret}"}
-    sent = errors = 0
-    for rec in records:
-        event = {
-            "event_type": "stealer_log",
-            "severity":   "critical",
-            "source_type": "telegram_stealer",
-            "source_name": f"tg:{channel}",
-            "target_domain": domain,
-            "payload": {
-                "url":      rec.get("url", ""),
-                "login":    rec.get("login", ""),
-                "password": rec.get("password", ""),
-                "channel":  channel,
-            },
-        }
-        try:
-            r = httpx.post(url, json=event, headers=headers, timeout=10)
-            st = r.json().get("status", "error")
-            if st in ("accepted", "duplicate"):
-                sent += 1
-            else:
-                errors += 1
-        except Exception as exc:
-            logger.error("[tg-stealer] ingest error: %s", exc)
-            errors += 1
-    return sent, errors
-
-
-# ─────────────────────────────────────────────────────────
-# Оркестратор
-# ─────────────────────────────────────────────────────────
 
 def scan_tg_stealer_channels(
     domain: str,
@@ -242,61 +80,132 @@ def scan_tg_stealer_channels(
     extra_channels: list[str] | None = None,
 ) -> dict:
     """
-    Проверяет все каналы по домену. Возвращает сводку:
-    {channel: {found, matched, sent, errors}, ...}
+    Сканирует Telegram-каналы через Telethon.
+    Возвращает сводку: {channel: {posts, matched, sent, errors}} или
+    {"error": "причина"} если Telethon не настроен.
     """
-    import os
-    env_extra = [
-        c.strip().lstrip("@")
-        for c in os.getenv("STEALER_TG_EXTRA", "").split(",")
-        if c.strip()
-    ]
+    problem = _check_setup()
+    if problem:
+        logger.warning("[tg-stealer] Недоступен: %s", problem)
+        return {"error": problem, "setup_required": True}
+
+    api_id   = int(os.getenv("TELEGRAM_API_ID"))
+    api_hash = os.getenv("TELEGRAM_API_HASH")
+    session  = os.getenv("TELEGRAM_SESSION_FILE", "easm_tg_session")
+
     channels = list(dict.fromkeys(
-        STEALER_TG_CHANNELS + env_extra + (extra_channels or [])
+        STEALER_TG_CHANNELS + (extra_channels or [])
     ))
 
-    summary: dict[str, dict] = {}
-    total_matched = total_sent = 0
+    import httpx
+    from urllib.parse import urlparse
 
-    for channel in channels:
-        cache_key = f"tg:{channel}"
-        texts = _CACHE.get(cache_key)
-        if texts and time.time() - texts[0] < _CACHE_TTL:
-            post_texts = texts[1]
-        else:
-            post_texts = _fetch_channel_text(channel)
-            _CACHE[cache_key] = (time.time(), post_texts)
+    def _domain_match(text: str, target: str) -> bool:
+        import re
+        for url_m in re.finditer(r'https?://([^\s/:?#]+)', text):
+            host = url_m.group(1).removeprefix("www.")
+            if host == target or host.endswith("." + target):
+                return True
+        for email_m in re.finditer(r'[a-zA-Z0-9._%+\-]+@([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})', text):
+            if email_m.group(1).lower() == target:
+                return True
+        return False
 
-        found = matched = sent = errors = 0
+    def _extract_creds(text: str) -> list[dict]:
+        import re
+        records = []
+        three = re.compile(
+            r'(https?://[^\s:]+)[:|]([^\s:]+):(\S{4,})'
+        )
+        combo = re.compile(
+            r'([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}):(\S{4,})'
+        )
+        for m in three.finditer(text):
+            records.append({"url": m.group(1), "login": m.group(2), "password": m.group(3)})
+        if not records:
+            for m in combo.finditer(text):
+                records.append({"url": "", "login": m.group(1), "password": m.group(2)})
+        return records
 
-        for text in post_texts:
-            recs = _parse_post_text(text)
-            found += len(recs)
-            hits = [r for r in recs if _matches(r, domain)]
-            matched += len(hits)
-            if hits:
-                s, e = _ingest(hits, channel, domain, core_api_url, internal_secret)
-                sent   += s
-                errors += e
+    ingest_url = f"{core_api_url}/api/v1/internal/ingest"
+    headers    = {"Authorization": f"Bearer {internal_secret}"}
+    summary    = {}
 
-        if matched > 0 or found > 0:
-            logger.info(
-                "[tg-stealer] @%s: постов=%d записей=%d совпало=%d отправлено=%d",
-                channel, len(post_texts), found, matched, sent,
-            )
+    try:
+        with TelegramClient(session, api_id, api_hash) as client:
+            for channel in channels:
+                posts = found = matched = sent = errors = 0
+                try:
+                    entity = client.get_entity(channel)
+                    for msg in client.iter_messages(entity, limit=100):
+                        posts += 1
+                        text = msg.message or ""
 
-        summary[channel] = {
-            "posts":   len(post_texts),
-            "found":   found,
-            "matched": matched,
-            "sent":    sent,
-            "errors":  errors,
-        }
-        total_matched += matched
-        total_sent    += sent
+                        # Обрабатываем текстовые сообщения
+                        recs = _extract_creds(text)
+                        found += len(recs)
+                        for rec in recs:
+                            if not _domain_match(
+                                rec.get("url", "") + " " + rec.get("login", ""),
+                                domain,
+                            ):
+                                continue
+                            matched += 1
+                            event = {
+                                "event_type":   "stealer_log",
+                                "severity":     "critical",
+                                "source_type":  "telegram_stealer",
+                                "source_name":  f"tg:{channel}",
+                                "target_domain": domain,
+                                "payload": {**rec, "channel": channel, "msg_id": msg.id},
+                            }
+                            try:
+                                r = httpx.post(ingest_url, json=event, headers=headers, timeout=10)
+                                if r.json().get("status") in ("accepted", "duplicate"):
+                                    sent += 1
+                                else:
+                                    errors += 1
+                            except Exception as exc:
+                                logger.error("[tg-stealer] ingest: %s", exc)
+                                errors += 1
 
-    logger.info(
-        "[tg-stealer] %s: каналов=%d совпало=%d отправлено=%d",
-        domain, len(channels), total_matched, total_sent,
-    )
+                        # Файловые вложения — скачиваем и парсим через stealer_parser
+                        if msg.document:
+                            name = ""
+                            for attr in msg.document.attributes:
+                                from telethon.tl.types import DocumentAttributeFilename
+                                if isinstance(attr, DocumentAttributeFilename):
+                                    name = attr.file_name
+                            if name.lower().endswith((".txt", ".zip", ".log", ".csv")):
+                                try:
+                                    file_bytes = client.download_media(msg, file=bytes)
+                                    if file_bytes:
+                                        sys.path.insert(0, str(Path(__file__).parent))
+                                        from stealer_parser import parse_stealer_log
+                                        result = parse_stealer_log(
+                                            file_bytes, name, [domain],
+                                            core_api_url, internal_secret,
+                                        )
+                                        matched += result.get("matched", 0)
+                                        sent    += result.get("sent", 0)
+                                        errors  += result.get("errors", 0)
+                                except Exception as exc:
+                                    logger.error("[tg-stealer] file download %s: %s", name, exc)
+
+                except Exception as exc:
+                    logger.warning("[tg-stealer] @%s: %s", channel, exc)
+
+                summary[channel] = {
+                    "posts": posts, "found": found,
+                    "matched": matched, "sent": sent, "errors": errors,
+                }
+                logger.info(
+                    "[tg-stealer] @%s: posts=%d found=%d matched=%d sent=%d",
+                    channel, posts, found, matched, sent,
+                )
+
+    except Exception as exc:
+        logger.error("[tg-stealer] Ошибка клиента: %s", exc)
+        return {"error": str(exc)}
+
     return summary
