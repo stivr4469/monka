@@ -3,7 +3,7 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # БД
     DATABASE_URL: str = "postgresql+asyncpg://easm:easm@postgres:5432/easm"
@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Первый суперпользователь (создаётся при старте)
     FIRST_SUPERUSER_EMAIL: str = "admin@example.com"
     FIRST_SUPERUSER_PASSWORD: str = "changeme"
+
+    # GitHub поиск (опционально)
+    GITHUB_TOKEN: str = ""
 
 
 @lru_cache
