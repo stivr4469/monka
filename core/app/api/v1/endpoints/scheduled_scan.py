@@ -97,8 +97,7 @@ def _compute_next_run(frequency: str, from_time: datetime | None = None) -> date
 
 def _get_core_api_url() -> str:
     """Возвращает URL Core API для фоновых задач."""
-    port = int(os.getenv("APP_PORT", "8000"))
-    return f"http://127.0.0.1:{port}"
+    return f"http://127.0.0.1:{settings.APP_PORT}"
 
 
 def _run_full_scan_background(domain: str, port: int) -> None:
@@ -190,7 +189,6 @@ async def trigger_manual_scan(
     if not asset.is_active:
         raise HTTPException(status_code=400, detail="Актив деактивирован")
 
-    port = int(os.getenv("APP_PORT", "8000"))
     domain = asset.domain
 
     # Запускаем сканирование в фоне — не блокируем HTTP-запрос

@@ -85,8 +85,7 @@ async def upload_stealer_log(
     filename = file.filename or "upload.txt"
 
     # Запускаем парсинг в фоне
-    port = int(os.getenv("APP_PORT", "8000"))
-    core_api_url = f"http://127.0.0.1:{port}"
+    core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     _executor.submit(
         parse_stealer_log,

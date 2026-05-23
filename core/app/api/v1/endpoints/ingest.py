@@ -28,7 +28,7 @@ except ImportError:
 
 _alert_executor = ThreadPoolExecutor(max_workers=1)
 _SEVERITY_FOR_ALERTS = {"low", "medium", "high", "critical"}
-_APP_PORT = int(os.getenv("APP_PORT", "8000"))
+_APP_PORT: int = settings.APP_PORT
 
 router = APIRouter(
     prefix="/internal",

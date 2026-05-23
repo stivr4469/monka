@@ -1005,6 +1005,127 @@ function init() {
   switchTab('dashboard');
 }
 
+// ─────────────────────────────────────────────
+// Охота на стилер-логи
+// ─────────────────────────────────────────────
+
+let _stealerFile = null;
+
+function handleStealerFileSelect(input) {
+  _stealerFile = input.files[0] || null;
+  _updateStealerUI();
+}
+
+function handleStealerDrop(event) {
+  event.preventDefault();
+  document.getElementById('stealer-drop-zone').classList.remove('drag-over');
+  const file = event.dataTransfer.files[0];
+  if (!file) return;
+  if (!/\.(zip|txt|log|csv)$/i.test(file.name)) {
+    Toast.show('warning', 'Неверный формат', 'Поддерживаются: .zip .txt .log .csv');
+    return;
+  }
+  _stealerFile = file;
+  _updateStealerUI();
+}
+
+function _updateStealerUI() {
+  const infoEl  = document.getElementById('stealer-file-info');
+  const labelEl = document.getElementById('stealer-drop-label');
+  const btn     = document.getElementById('stealer-upload-btn');
+  if (_stealerFile) {
+    const mb = (_stealerFile.size / 1048576).toFixed(2);
+    infoEl.textContent  = `${_stealerFile.name} — ${mb} МБ`;
+    labelEl.innerHTML   = 'Файл выбран. <span style="color:var(--accent);cursor:pointer">Заменить</span>';
+    btn.disabled = false;
+  } else {
+    infoEl.textContent  = '';
+    labelEl.innerHTML   = 'Перетащите ZIP / TXT или <span style="color:var(--accent);cursor:pointer">выберите файл</span>';
+    btn.disabled = true;
+  }
+}
+
+async function handleStealerUpload() {
+  if (!_stealerFile) {
+    Toast.show('warning', 'Выберите файл');
+    return;
+  }
+
+  const btn       = document.getElementById('stealer-upload-btn');
+  const resultEl  = document.getElementById('stealer-result');
+  const domainsRaw = document.getElementById('stealer-domains').value.trim();
+
+  setLoading(btn, true);
+  resultEl.style.display = 'none';
+
+  try {
+    const token = API.getToken();
+    const fd    = new FormData();
+    fd.append('file', _stealerFile);
+
+    let url = '/api/v1/stealer/upload';
+    if (domainsRaw) url += `?domains=${encodeURIComponent(domainsRaw)}`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    });
+
+    if (res.status === 401) {
+      API.clearToken();
+      window.location.href = '/login.html';
+      return;
+    }
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+
+    // Успех
+    const domains = (data.target_domains || []).join(', ') || '—';
+    resultEl.innerHTML = `
+      <div style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.25);
+                  border-radius:8px;padding:.875rem 1rem;margin-top:.5rem">
+        <div style="color:#3fb950;font-weight:600;margin-bottom:.5rem">
+          ✓ Охота запущена — ${escHtml(_stealerFile.name)}
+        </div>
+        <div style="color:var(--text-secondary);font-size:.8125rem;line-height:1.6">
+          Файл: <strong>${escHtml(_stealerFile.name)}</strong>
+          (${(_stealerFile.size / 1048576).toFixed(2)} МБ)<br>
+          Домены для поиска: <code>${escHtml(domains)}</code><br>
+          Парсинг идёт в фоне. Результаты появятся в
+          <button class="btn btn-ghost btn-sm" onclick="switchTab('events')"
+                  style="padding:0;text-decoration:underline;color:var(--accent)">
+            Events → stealer_log
+          </button>
+        </div>
+      </div>`;
+    resultEl.style.display = 'block';
+
+    addScanLog('ok', domains, `stealer upload: ${_stealerFile.name}`);
+    Toast.show('success', 'Охота запущена', _stealerFile.name);
+
+    // Сбрасываем выбор файла
+    _stealerFile = null;
+    document.getElementById('stealer-file-input').value = '';
+    _updateStealerUI();
+
+  } catch (err) {
+    resultEl.innerHTML = `
+      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);
+                  border-radius:8px;padding:.875rem 1rem;color:#f85149;font-size:.875rem">
+        ✗ ${escHtml(err.message)}
+      </div>`;
+    resultEl.style.display = 'block';
+    Toast.show('error', 'Ошибка загрузки', err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 // Старт после загрузки DOM
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

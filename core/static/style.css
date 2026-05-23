@@ -1091,3 +1091,25 @@ select option {
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .stat-card .value { font-size: 1.5rem; }
 }
+
+/* ===== STEALER HUNT ===== */
+.stealer-drop-zone {
+  border: 2px dashed rgba(248,81,73,.35);
+  border-radius: 10px;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(248,81,73,.03);
+}
+.stealer-drop-zone:hover,
+.stealer-drop-zone.drag-over {
+  border-color: #f85149;
+  background: rgba(248,81,73,.07);
+}
+.stealer-drop-zone.drag-over {
+  outline: 3px solid rgba(248,81,73,.3);
+}

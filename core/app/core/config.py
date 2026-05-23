@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Telegram Bot API токен для алертов
     TELEGRAM_BOT_TOKEN: str = ""
 
+    # Порт Core API (используется воркерами для ingest)
+    APP_PORT: int = 8000
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -5,7 +5,6 @@
 Результаты появятся в /api/v1/events/?event_type=telegram_leak
 """
 import concurrent.futures
-import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -98,8 +97,7 @@ async def trigger_telegram_scan(
     extra_channels = body.extra_channels
 
     # Определяем URL Core API — воркер обращается к нему для ingest событий
-    port = int(os.getenv("APP_PORT", "8000"))
-    core_api_url = f"http://127.0.0.1:{port}"
+    core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     # Общее количество каналов для информирования пользователя
     total_channels = len(DEFAULT_LEAK_CHANNELS) + len(extra_channels or [])

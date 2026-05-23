@@ -10,7 +10,6 @@
   - DarkSearch   → severity "high"
 """
 import concurrent.futures
-import os
 import sys
 from pathlib import Path
 
@@ -95,8 +94,7 @@ async def trigger_darknet_scan(
     domain = body.domain  # уже нормализован валидатором
 
     # URL Core API — воркер использует его для ingest событий через внутренний эндпоинт
-    port = int(os.getenv("APP_PORT", "8000"))
-    core_api_url = f"http://127.0.0.1:{port}"
+    core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     _executor.submit(
         monitor_darknet,
