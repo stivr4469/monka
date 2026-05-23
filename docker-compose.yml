@@ -1,0 +1,117 @@
+version: "3.9"
+
+x-common-env: &common-env
+  REDIS_URL: redis://redis:6379/0
+  CORE_API_URL: http://core:8000
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-INTERNAL_CHANGE_ME}
+
+services:
+  # ─── Инфраструктура ─────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: easm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-easm}
+      POSTGRES_DB: easm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "6379:6379"
+
+  opensearch:
+    image: opensearchproject/opensearch:2.14.0
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\\|yellow\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    ports:
+      - "9200:9200"
+
+  # ─── Control Plane ──────────────────────────────────────────────────────────
+
+  core:
+    build:
+      context: ./core
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql+asyncpg://easm:${POSTGRES_PASSWORD:-easm}@postgres:5432/easm
+      OPENSEARCH_URL: http://opensearch:9200
+      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_IN_PRODUCTION}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-admin@example.com}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-changeme}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─── Data Plane (Celery) ────────────────────────────────────────────────────
+
+  worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      core:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+    deploy:
+      replicas: 2
+
+  flower:
+    image: mher/flower:2.0
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      FLOWER_PORT: 5555
+    ports:
+      - "5555:5555"
+
+volumes:
+  postgres_data:
+  redis_data:
+  opensearch_data:
