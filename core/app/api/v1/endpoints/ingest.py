@@ -1,14 +1,34 @@
 import logging
+import os
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DBDep, verify_internal_secret
+from app.core.config import settings
 from app.models.asset import Asset
 from app.models.event import Event
 from app.schemas.normalized_event import NormalizedEvent
 
 logger = logging.getLogger(__name__)
+
+# Подключаем воркер Telegram-алертов
+_WORKERS_PATH = str(Path(__file__).parents[6] / "workers")
+if _WORKERS_PATH not in sys.path:
+    sys.path.insert(0, _WORKERS_PATH)
+
+try:
+    from tasks.telegram_alerts import dispatch_alerts as _dispatch_alerts
+    _ALERTS_AVAILABLE = True
+except ImportError:
+    _ALERTS_AVAILABLE = False
+
+_alert_executor = ThreadPoolExecutor(max_workers=1)
+_SEVERITY_FOR_ALERTS = {"low", "medium", "high", "critical"}
+_APP_PORT = int(os.getenv("APP_PORT", "8000"))
 
 router = APIRouter(
     prefix="/internal",
@@ -66,4 +86,16 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         db_event.severity,
         db_event.target_domain,
     )
+
+    # Отправляем Telegram-алерт в фоне для non-info событий
+    if _ALERTS_AVAILABLE and event.severity in _SEVERITY_FOR_ALERTS and settings.TELEGRAM_BOT_TOKEN:
+        core_url = f"http://127.0.0.1:{_APP_PORT}"
+        _alert_executor.submit(
+            _dispatch_alerts,
+            event.model_dump(),
+            core_url,
+            settings.INTERNAL_API_SECRET,
+            settings.TELEGRAM_BOT_TOKEN,
+        )
+
     return {"status": "accepted", "event_id": db_event.id}
