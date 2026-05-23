@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     assets,
     auth,
     breach,
+    darknet_scan,
     events,
     github_scan,
     ingest,
@@ -12,6 +13,7 @@ from app.api.v1.endpoints import (
     paste_scan,
     scheduled_scan,
     stealer,
+    telegram_scan,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -30,6 +32,8 @@ api_router.include_router(internal_alerts.router)
 # Сканирование
 api_router.include_router(github_scan.router)
 api_router.include_router(paste_scan.router)
+api_router.include_router(telegram_scan.router)
+api_router.include_router(darknet_scan.router)
 
 # Загрузка файлов
 api_router.include_router(stealer.router)

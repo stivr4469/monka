@@ -1,0 +1,126 @@
+"""
+Эндпоинт запуска мониторинга публичных Telegram-каналов по домену.
+
+Запускает monitor_telegram_channels в фоне (ThreadPoolExecutor).
+Результаты появятся в /api/v1/events/?event_type=telegram_leak
+"""
+import concurrent.futures
+import os
+import sys
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, field_validator
+
+from app.api.deps import CurrentUser
+from app.core.config import settings
+
+router = APIRouter(prefix="/scan", tags=["scan"])
+
+# Пул потоков для фоновых задач — max_workers=4 позволяет параллельно
+# сканировать несколько доменов без блокировки event loop FastAPI
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+# Добавляем workers/ в sys.path чтобы импортировать tasks.telegram_monitor
+_WORKERS_PATH = str(Path(__file__).parents[6] / "workers")
+if _WORKERS_PATH not in sys.path:
+    sys.path.insert(0, _WORKERS_PATH)
+
+try:
+    from tasks.telegram_monitor import DEFAULT_LEAK_CHANNELS, monitor_telegram_channels
+    _TELEGRAM_MONITOR_AVAILABLE = True
+except ImportError:
+    _TELEGRAM_MONITOR_AVAILABLE = False
+
+
+# ──────────────────────────────────────────────
+# Схемы запроса / ответа
+# ──────────────────────────────────────────────
+
+class TelegramScanRequest(BaseModel):
+    domain: str
+    extra_channels: Optional[list[str]] = None
+
+    @field_validator("domain")
+    @classmethod
+    def domain_not_empty(cls, v: str) -> str:
+        stripped = v.strip().lower()
+        if not stripped:
+            raise ValueError("Домен не может быть пустым")
+        return stripped
+
+    @field_validator("extra_channels")
+    @classmethod
+    def normalize_channels(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return None
+        # Нормализуем: убираем @ и пробелы, фильтруем пустые
+        return [ch.strip().lstrip("@") for ch in v if ch.strip().lstrip("@")]
+
+
+class TelegramScanResponse(BaseModel):
+    status: str
+    domain: str
+    channels: int
+    detail: str
+
+
+# ──────────────────────────────────────────────
+# Эндпоинт
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/telegram",
+    response_model=TelegramScanResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def trigger_telegram_scan(
+    body: TelegramScanRequest,
+    current_user: CurrentUser,
+) -> TelegramScanResponse:
+    """
+    Запускает мониторинг публичных Telegram-каналов на упоминания домена
+    в фоновом потоке.
+
+    По умолчанию сканируются каналы из DEFAULT_LEAK_CHANNELS.
+    Дополнительные каналы передаются в extra_channels (без @).
+
+    Результаты доступны через /api/v1/events/?event_type=telegram_leak
+    """
+    if not _TELEGRAM_MONITOR_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram-монитор недоступен: воркер не загружен",
+        )
+
+    domain = body.domain
+    extra_channels = body.extra_channels
+
+    # Определяем URL Core API — воркер обращается к нему для ingest событий
+    port = int(os.getenv("APP_PORT", "8000"))
+    core_api_url = f"http://127.0.0.1:{port}"
+
+    # Общее количество каналов для информирования пользователя
+    total_channels = len(DEFAULT_LEAK_CHANNELS) + len(extra_channels or [])
+
+    _executor.submit(
+        monitor_telegram_channels,
+        domain,
+        core_api_url,
+        settings.INTERNAL_API_SECRET,
+        extra_channels,
+    )
+
+    return TelegramScanResponse(
+        status="processing",
+        domain=domain,
+        channels=total_channels,
+        detail=(
+            f"Мониторинг {total_channels} Telegram-каналов запущен в фоне. "
+            "Результаты: /api/v1/events/?event_type=telegram_leak"
+        ),
+    )
+
+
+# ROUTER: api_router.include_router(telegram_scan.router)

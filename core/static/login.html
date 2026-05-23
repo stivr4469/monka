@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — EASM Platform</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .login-error {
+      background: var(--sev-critical-bg);
+      border: 1px solid rgba(248,81,73,.35);
+      color: var(--sev-critical);
+      border-radius: var(--radius-md);
+      padding: .625rem .875rem;
+      font-size: .875rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .login-error.visible { display: block; }
+    .input-group { position: relative; }
+    .input-group svg {
+      position: absolute;
+      left: .75rem; top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+    .input-group input { padding-left: 2.25rem; }
+    .login-footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: .8125rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+
+      <div class="login-logo">
+        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"
+             style="width:48px;height:48px;color:var(--accent)">
+          <path d="M24 4L6 12v12c0 10.5 7.7 20.3 18 22.7C35.3 44.3 42 34.5 42 24V12L24 4z"
+                fill="rgba(88,166,255,.15)" stroke="currentColor" stroke-width="2"
+                stroke-linejoin="round"/>
+          <path d="M17 24l5 5 9-9" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h1>EASM Platform</h1>
+        <p>External Attack Surface Management</p>
+      </div>
+
+      <div id="login-error" class="login-error" role="alert"></div>
+
+      <form id="login-form" novalidate>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <div class="input-group">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4h12v9H2V4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+              <path d="M2 4l6 5 6-5" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            </svg>
+            <input type="email" id="email" name="email" autocomplete="username"
+                   placeholder="admin@example.com" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Пароль</label>
+          <div class="input-group">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect x="3" y="7" width="10" height="7" rx="1.5"
+                    stroke="currentColor" stroke-width="1.3"/>
+              <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"
+                    stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <input type="password" id="password" name="password" autocomplete="current-password"
+                   placeholder="••••••••" required>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="login-btn"
+                style="width:100%;margin-top:.5rem;padding:.6875rem;justify-content:center">
+          Войти
+        </button>
+      </form>
+
+      <div class="login-footer">EASM Platform v0.1.0 &nbsp;·&nbsp; Защита периметра</div>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    /* Если уже авторизован — сразу в дашборд */
+    if (localStorage.getItem('easm_token')) {
+      window.location.href = '/';
+    }
+
+    const form     = document.getElementById('login-form');
+    const errBox   = document.getElementById('login-error');
+    const loginBtn = document.getElementById('login-btn');
+
+    function showError(msg) {
+      /* Используем textContent чтобы исключить XSS */
+      errBox.textContent = msg;
+      errBox.classList.add('visible');
+    }
+
+    function setLoading(loading) {
+      loginBtn.disabled = loading;
+      if (loading) {
+        loginBtn._orig = loginBtn.innerHTML;
+        loginBtn.innerHTML = '<span class="spinner"></span> Вход…';
+      } else {
+        loginBtn.innerHTML = loginBtn._orig || 'Войти';
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errBox.classList.remove('visible');
+
+      const email    = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!email || !password) {
+        showError('Введите email и пароль');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const body = new URLSearchParams({ username: email, password });
+        const res = await fetch('/api/v1/auth/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || 'Неверный логин или пароль');
+        }
+
+        const data = await res.json();
+        localStorage.setItem('easm_token', data.access_token);
+        window.location.href = '/';
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>

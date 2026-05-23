@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EASM Security Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="app-header">
+  <a class="header-brand" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2L3 7v6c0 5.25 3.85 10.15 9 11.35C17.15 23.15 21 18.25 21 13V7L12 2z"/>
+      <path d="M9 12l2 2 4-4"/>
+    </svg>
+    <span>EASM Platform</span>
+    <span class="version">v0.1</span>
+  </a>
+  <div class="header-right">
+    <div class="refresh-indicator" id="refresh-indicator" style="display:none">
+      <span class="refresh-dot"></span>
+      <span>Обновление через <span id="refresh-count">30</span>с</span>
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="handleLogout()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M5 2H2.5A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12H5M9.5 9.5L13 7M13 7l-3.5-2.5M13 7H5"
+              stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Выйти
+    </button>
+  </div>
+</header>
+
+<!-- ===== NAVIGATION TABS ===== -->
+<nav class="app-nav" role="navigation" aria-label="Основная навигация">
+  <button class="nav-tab active" data-tab="dashboard">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <rect x="1" y="1" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+      <rect x="9" y="1" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+      <rect x="1" y="9" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+      <rect x="9" y="9" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+    </svg>
+    Dashboard
+  </button>
+  <button class="nav-tab" data-tab="assets">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
+      <ellipse cx="8" cy="8" rx="2.5" ry="6.5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M1.5 8h13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+    </svg>
+    Assets
+  </button>
+  <button class="nav-tab" data-tab="events">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M2 4h12M2 8h8M2 12h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="2.5" stroke="currentColor" stroke-width="1.3"/>
+    </svg>
+    Events
+  </button>
+  <button class="nav-tab" data-tab="alerts">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M8 1.5a1 1 0 0 1 .87.5L14 10a1 1 0 0 1-.87 1.5H2.87A1 1 0 0 1 2 10l5.13-8a1 1 0 0 1 .87-.5z"
+            stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      <path d="M8 6v2.5M8 10.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    Alerts
+  </button>
+  <button class="nav-tab" data-tab="scan">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M11 11l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M5 7h4M7 5v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    </svg>
+    Scan
+  </button>
+</nav>
+
+<!-- ===== MAIN CONTENT ===== -->
+<main class="app-content">
+
+  <!-- ══════ TAB: Dashboard ══════ -->
+  <div class="tab-pane active" id="tab-dashboard" role="tabpanel">
+
+    <!-- Stat cards -->
+    <div class="stats-grid">
+      <div class="stat-card total">
+        <div class="label">Total Events</div>
+        <div class="value" id="stat-total">—</div>
+        <div class="sublabel">Все зафиксированные события</div>
+      </div>
+      <div class="stat-card critical">
+        <div class="label">Critical</div>
+        <div class="value" id="stat-critical">—</div>
+        <div class="sublabel">Требуют немедленного внимания</div>
+      </div>
+      <div class="stat-card high">
+        <div class="label">High</div>
+        <div class="value" id="stat-high">—</div>
+        <div class="sublabel">Высокий приоритет</div>
+      </div>
+      <div class="stat-card medium">
+        <div class="label">Medium</div>
+        <div class="value" id="stat-medium">—</div>
+        <div class="sublabel">Средний приоритет</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="dashboard-grid">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Events by Type</span>
+        </div>
+        <div class="bar-chart" id="events-type-chart">
+          <div class="loading-skeleton skeleton-line"></div>
+          <div class="loading-skeleton skeleton-line" style="width:80%"></div>
+          <div class="loading-skeleton skeleton-line" style="width:55%"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Severity Distribution</span>
+        </div>
+        <div class="bar-chart" id="severity-chart">
+          <div class="loading-skeleton skeleton-line"></div>
+          <div class="loading-skeleton skeleton-line" style="width:70%"></div>
+          <div class="loading-skeleton skeleton-line" style="width:40%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent events table -->
+    <div style="margin-top:1.5rem">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Последние события</div>
+          <div class="section-subtitle">10 свежих событий. Нажмите строку — раскроется payload.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="renderDashboard()">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+            <path d="M6.5 1.5A5 5 0 1 1 1.5 6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M1.5 1.5V6.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Обновить
+        </button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th><th>Type</th><th>Domain</th><th>Source</th><th>Time</th>
+            </tr>
+          </thead>
+          <tbody id="recent-events-tbody">
+            <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+              <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Авто-обновление footer -->
+    <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;
+                color:var(--text-muted);font-size:.8125rem">
+      <span class="refresh-dot"></span>
+      Авто-обновление каждые 30 секунд. Следующее через
+      <strong id="refresh-label" style="color:var(--text-secondary)">—</strong> с
+    </div>
+  </div>
+
+  <!-- ══════ TAB: Assets ══════ -->
+  <div class="tab-pane" id="tab-assets" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Assets</div>
+        <div class="section-subtitle">Управляемые домены организации</div>
+      </div>
+      <button class="btn btn-primary" onclick="openAddAssetModal()">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        Add Domain
+      </button>
+    </div>
+    <div id="assets-container">
+      <div class="loading-skeleton skeleton-line" style="height:100px;margin-bottom:.75rem"></div>
+      <div class="loading-skeleton skeleton-line" style="height:100px;width:80%"></div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: Events ══════ -->
+  <div class="tab-pane" id="tab-events" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Events</div>
+        <div class="section-subtitle">Нажмите строку — раскроется payload JSON</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="loadEventsPage()">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <path d="M6.5 1.5A5 5 0 1 1 1.5 6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M1.5 1.5V6.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Обновить
+      </button>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="filters-bar">
+      <span class="filter-label">Фильтры:</span>
+      <select id="filter-severity" onchange="applyEventsFilter()">
+        <option value="">Все severity</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+        <option value="info">Info</option>
+      </select>
+      <select id="filter-type" onchange="applyEventsFilter()">
+        <option value="">Все типы</option>
+        <option value="subdomain">subdomain</option>
+        <option value="vulnerability">vulnerability</option>
+        <option value="secret_leak">secret_leak</option>
+        <option value="exposed_service">exposed_service</option>
+        <option value="stealer_log">stealer_log</option>
+        <option value="github_leak">github_leak</option>
+        <option value="paste_leak">paste_leak</option>
+      </select>
+      <input type="text" id="filter-domain" placeholder="Домен…" style="min-width:200px">
+      <button class="btn btn-secondary btn-sm" onclick="clearEventsFilter()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        Сбросить
+      </button>
+    </div>
+
+    <div class="table-wrapper"
+         style="border-bottom:none;border-radius:var(--radius-lg) var(--radius-lg) 0 0">
+      <table>
+        <thead>
+          <tr>
+            <th>Severity</th><th>Type</th><th>Domain</th>
+            <th>Source Type</th><th>Source Name</th><th>Detected At</th>
+          </tr>
+        </thead>
+        <tbody id="events-tbody">
+          <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">
+            <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span class="pagination-info" id="pagination-info">—</span>
+      <div class="pagination-controls" id="pagination-controls"></div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: Alerts ══════ -->
+  <div class="tab-pane" id="tab-alerts" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Alert Rules</div>
+        <div class="section-subtitle">Telegram-уведомления по событиям</div>
+      </div>
+    </div>
+
+    <div class="alerts-layout">
+      <!-- Список правил -->
+      <div>
+        <div style="margin-bottom:.75rem;display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:.875rem;color:var(--text-secondary);font-weight:600">Правила</span>
+          <button class="btn btn-secondary btn-sm" onclick="renderAlerts()">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <path d="M1.5 1.5V6h4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Обновить
+          </button>
+        </div>
+        <div id="alerts-list">
+          <div class="loading-skeleton skeleton-line" style="height:72px;margin-bottom:.625rem"></div>
+        </div>
+      </div>
+
+      <!-- Форма создания правила -->
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Новое правило</span>
+          </div>
+          <form id="create-alert-form" novalidate
+                onsubmit="event.preventDefault(); submitCreateAlert()">
+            <div class="form-group">
+              <label for="alert-name">
+                Имя <span style="color:var(--sev-critical)">*</span>
+              </label>
+              <input type="text" id="alert-name"
+                     placeholder="Critical leaks — acme.com" required>
+            </div>
+            <div class="form-group">
+              <label for="alert-domain">Домен (пусто = все)</label>
+              <input type="text" id="alert-domain" placeholder="acme.com">
+            </div>
+            <div class="form-group">
+              <label for="alert-min-severity">Мин. severity</label>
+              <select id="alert-min-severity">
+                <option value="info">Info</option>
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="alert-chat-id">
+                Telegram chat_id <span style="color:var(--sev-critical)">*</span>
+              </label>
+              <input type="text" id="alert-chat-id"
+                     placeholder="-1001234567890" required>
+              <span style="font-size:.75rem;color:var(--text-muted);margin-top:.25rem;display:block">
+                Для групп — отрицательный ID
+              </span>
+            </div>
+            <button type="submit" class="btn btn-primary" id="create-alert-btn"
+                    style="width:100%;justify-content:center">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <path d="M6.5 1.5v11M1.5 6.5h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              Создать правило
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: Scan ══════ -->
+  <div class="tab-pane" id="tab-scan" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Manual Scan</div>
+        <div class="section-subtitle">Запустить сканирование вручную</div>
+      </div>
+    </div>
+
+    <div class="scan-form-card">
+      <div class="form-group">
+        <label for="scan-domain">Домен</label>
+        <input type="text" id="scan-domain" placeholder="example.com" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Модули</label>
+        <div class="scan-modules">
+          <label class="module-chip selected" data-module="subfinder">
+            <input type="checkbox" checked>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M3.5 6c.8-.8 1.8-1.3 2.5-1.3s1.7.5 2.5 1.3"
+                    stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+            Subfinder
+          </label>
+          <label class="module-chip" data-module="github">
+            <input type="checkbox">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1a5 5 0 1 0 0 10A5 5 0 0 0 6 1z" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M4.5 9v-.8c0-.5.2-.9.5-1.1C3.4 6.9 2.5 6 2.5 4.5c0-.6.2-1.2.6-1.6-.1-.3-.1-.8.1-1.4.4 0 .9.2 1.5.6.4-.1.9-.2 1.3-.2s.9.1 1.3.2c.6-.4 1.1-.6 1.5-.6.2.6.2 1.1.1 1.4.4.4.6 1 .6 1.6 0 1.5-.9 2.4-2.5 2.6.3.2.5.6.5 1.1V9"
+                    stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            GitHub
+          </label>
+          <label class="module-chip" data-module="paste">
+            <input type="checkbox">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <rect x="2" y="1.5" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M4 4h4M4 6h3M4 8h2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+            </svg>
+            Paste
+          </label>
+        </div>
+        <span style="font-size:.75rem;color:var(--text-muted);margin-top:.375rem;display:block">
+          Subfinder → создание актива. GitHub/Paste → API сканирования.
+        </span>
+      </div>
+      <button class="btn btn-primary" id="start-scan-btn" onclick="handleStartScan()"
+              style="width:100%;justify-content:center">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M5.5 5l3 2-3 2V5z" fill="currentColor"/>
+        </svg>
+        Start Scan
+      </button>
+    </div>
+
+    <div class="section-header" style="margin-bottom:.75rem">
+      <div class="section-title" style="font-size:1rem">История запусков</div>
+      <button class="btn btn-secondary btn-sm"
+              onclick="localStorage.removeItem('easm_scan_log'); renderScanLog()">
+        Очистить
+      </button>
+    </div>
+    <div class="scan-log" id="scan-log">
+      <span style="color:var(--text-muted)">Запусков пока не было</span>
+    </div>
+  </div>
+
+</main>
+
+<!-- ═══════ MODAL: Add Asset ═══════ -->
+<div class="modal-backdrop" id="add-asset-modal" role="dialog"
+     aria-modal="true" aria-labelledby="add-asset-title">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="add-asset-title">Add Domain</span>
+      <button class="btn btn-icon" onclick="Modal.close('add-asset-modal')" aria-label="Закрыть">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="add-asset-form" novalidate onsubmit="event.preventDefault(); submitAddAsset()">
+        <div class="form-group">
+          <label for="asset-domain-input">
+            Домен <span style="color:var(--sev-critical)">*</span>
+          </label>
+          <input type="text" id="asset-domain-input" placeholder="acme.com"
+                 autocomplete="off" required>
+          <span style="font-size:.75rem;color:var(--text-muted);margin-top:.25rem;display:block">
+            Subfinder автоматически запустится после добавления
+          </span>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label for="asset-desc-input">Описание (необязательно)</label>
+          <input type="text" id="asset-desc-input" placeholder="Главный сайт компании">
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="Modal.close('add-asset-modal')">Отмена</button>
+      <button class="btn btn-primary" id="add-asset-submit" onclick="submitAddAsset()">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <path d="M6.5 1.5v11M1.5 6.5h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        Добавить
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<script src="/app.js"></script>
+
+<script>
+  /* Патч: добавляем severity chart не трогая app.js */
+  (function () {
+    var _orig = window.renderStats;
+    window.renderStats = function (stats) {
+      _orig(stats);
+
+      var bySev   = (stats && stats.by_severity) || {};
+      var chartEl = document.getElementById('severity-chart');
+      if (!chartEl) return;
+
+      var order  = ['critical', 'high', 'medium', 'low', 'info'];
+      var colors = {
+        critical: 'var(--sev-critical)',
+        high:     'var(--sev-high)',
+        medium:   'var(--sev-medium)',
+        low:      'var(--sev-low)',
+        info:     'var(--sev-info)'
+      };
+
+      var entries = order
+        .map(function (k) { return [k, bySev[k] || 0]; })
+        .filter(function (p) { return p[1] > 0; });
+
+      var maxVal = entries.length ? entries[0][1] : 1;
+
+      if (!entries.length) {
+        chartEl.innerHTML =
+          '<div class="empty-state" style="padding:1rem"><p>Нет данных</p></div>';
+        return;
+      }
+
+      chartEl.innerHTML = entries.map(function (pair) {
+        var sev   = pair[0];
+        var count = pair[1];
+        var pct   = Math.max(2, Math.round((count / maxVal) * 100));
+        var label = sev.charAt(0).toUpperCase() + sev.slice(1);
+        return '<div class="bar-row">'
+          + '<span class="bar-label">' + label + '</span>'
+          + '<div class="bar-track">'
+          + '<div class="bar-fill" style="width:' + pct + '%;background:' + colors[sev] + '"></div>'
+          + '</div>'
+          + '<span class="bar-count">' + count.toLocaleString('ru') + '</span>'
+          + '</div>';
+      }).join('');
+    };
+
+    /* Обновляем label авто-обновления */
+    var _origCounter = window.updateRefreshCounter;
+    window.updateRefreshCounter = function () {
+      _origCounter && _origCounter();
+      var lbl = document.getElementById('refresh-label');
+      if (lbl && window.State) lbl.textContent = State.refreshCountdown;
+
+      var indicator = document.getElementById('refresh-indicator');
+      if (indicator) {
+        var isActive =
+          document.getElementById('tab-dashboard').classList.contains('active');
+        indicator.style.display = isActive ? 'flex' : 'none';
+      }
+    };
+  }());
+</script>
+
+</body>
+</html>
