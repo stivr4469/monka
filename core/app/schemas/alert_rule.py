@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field, field_validator
 SeverityLevel = Literal["info", "low", "medium", "high", "critical"]
 
 # Допустимые типы событий (должны соответствовать NormalizedEvent.EventType)
-VALID_EVENT_TYPES = {"subdomain", "vulnerability", "secret_leak", "exposed_service", "stealer_log"}
+VALID_EVENT_TYPES = {
+    "subdomain", "vulnerability", "secret_leak", "exposed_service",
+    "stealer_log", "email_breach", "github_leak",
+    "darknet_mention", "ransomware_mention", "forum_mention",
+    "telegram_leak", "paste_mention",
+}
 
 
 class AlertRuleCreate(BaseModel):

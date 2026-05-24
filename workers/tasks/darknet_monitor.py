@@ -56,7 +56,7 @@ AHMIA_SEARCH_URL = "https://ahmia.fi/search/"
 DARKSEARCH_SEARCH_URL = "https://darksearch.io/api/search"
 
 # RansomWatch — агрегатор постов ransomware-групп, публичный JSON
-RANSOMWATCH_POSTS_URL = "https://ransomwatch.telemetry.ltd/api/posts.json"
+RANSOMWATCH_POSTS_URL = "https://raw.githubusercontent.com/joshhighet/ransomwatch/main/posts.json"
 
 # TTL кэша RansomWatch в секундах (1 час)
 _RANSOMWATCH_CACHE_TTL = 3600
@@ -396,7 +396,7 @@ def monitor_darknet(
             event: dict[str, Any] = {
                 "event_type": "darknet_mention",
                 "severity": "critical",
-                "source_type": "darknet_monitor",
+                "source_type": "darknet",
                 "source_name": "ransomwatch",
                 "target_domain": domain,
                 "payload": {
@@ -425,7 +425,7 @@ def monitor_darknet(
             event = {
                 "event_type": "darknet_mention",
                 "severity": "high",
-                "source_type": "darknet_monitor",
+                "source_type": "darknet",
                 "source_name": "ahmia",
                 "target_domain": domain,
                 "payload": {
@@ -452,7 +452,7 @@ def monitor_darknet(
             event = {
                 "event_type": "darknet_mention",
                 "severity": "high",
-                "source_type": "darknet_monitor",
+                "source_type": "darknet",
                 "source_name": "darksearch",
                 "target_domain": domain,
                 "payload": {

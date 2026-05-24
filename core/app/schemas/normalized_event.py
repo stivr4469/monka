@@ -15,6 +15,11 @@ class EventType(str, Enum):
     STEALER_LOG = "stealer_log"
     EMAIL_BREACH = "email_breach"
     GITHUB_LEAK = "github_leak"
+    DARKNET_MENTION = "darknet_mention"
+    RANSOMWARE_MENTION = "ransomware_mention"
+    FORUM_MENTION = "forum_mention"
+    TELEGRAM_LEAK = "telegram_leak"
+    PASTE_MENTION = "paste_mention"
 
 
 class Severity(str, Enum):
@@ -33,6 +38,11 @@ class SourceType(str, Enum):
     MANUAL = "manual"
     BREACH_CHECKER = "breach_checker"
     GITHUB_SEARCH = "github_search"
+    DARKNET = "darknet"
+    RANSOMWATCH = "ransomwatch"
+    INTELX = "intelx"
+    TELEGRAM = "telegram"
+    PASTE = "paste"
 
 
 class NormalizedEvent(BaseModel):
