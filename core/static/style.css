@@ -1337,6 +1337,200 @@ select option {
 
 .source-badge--key::before { content: '🔑'; font-size: .65rem; }
 
+/* ===== MSSP Multi-Tenancy Panel (задача 9.F) ===== */
+
+/* Легенда над списком клиентов */
+.mssp-legend {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  font-size: .8125rem;
+  flex-wrap: wrap;
+}
+
+.mssp-legend-item {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  color: var(--text-2);
+}
+
+/* Карточка клиента: адаптивная grid-сетка */
+.mssp-client-card {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto auto;
+  gap: .75rem 1rem;
+  align-items: center;
+  padding: .875rem 1.125rem;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  margin-bottom: .5rem;
+  transition: background var(--transition), border-color var(--transition);
+  cursor: default;
+}
+
+.mssp-client-card:hover {
+  background: var(--surface-2);
+  border-color: var(--accent-h);
+}
+
+/* Деградация рейтинга — красная подсветка */
+.mssp-client-card.mssp-degraded {
+  border-left-color: var(--sev-critical);
+}
+
+/* Рост рейтинга — зелёная подсветка */
+.mssp-client-card.mssp-improved {
+  border-left-color: var(--success);
+}
+
+.mssp-org-name {
+  font-weight: 600;
+  font-size: .9375rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.mssp-score {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 3rem;
+  text-align: right;
+}
+
+.mssp-delta {
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 5rem;
+  text-align: center;
+}
+
+.mssp-meta {
+  font-size: .8rem;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mssp-plan {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: .2rem .5rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.mssp-plan.plan-starter     { background: var(--sev-info-bg);     color: var(--sev-info); }
+.mssp-plan.plan-professional { background: var(--sev-low-bg);      color: var(--accent); }
+.mssp-plan.plan-enterprise   { background: var(--success-bg);      color: var(--success); }
+
+/* Пустое состояние MSSP-панели */
+.mssp-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+}
+
+.mssp-empty svg {
+  display: block;
+  margin: 0 auto 1rem;
+  opacity: .4;
+}
+
+/* ===== ATTACK GRAPH TAB (задача 9.E) ===== */
+.attack-path-card {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 1rem 1.25rem;
+  border-radius: var(--radius-lg);
+  margin-bottom: .625rem;
+  background: rgba(248, 81, 73, .07);
+  border: 1px solid rgba(248, 81, 73, .25);
+  border-left: 4px solid var(--sev-critical);
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.attack-path-card:hover {
+  background: rgba(248, 81, 73, .12);
+}
+
+.attack-path-card.medium {
+  background: rgba(227, 179, 65, .07);
+  border-color: rgba(227, 179, 65, .3);
+  border-left-color: var(--sev-high);
+}
+
+.attack-path-icon {
+  font-size: 1.75rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.attack-path-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.attack-path-asset {
+  font-weight: 700;
+  font-size: .9375rem;
+  font-family: var(--font-mono);
+  color: var(--text);
+  margin-bottom: .15rem;
+}
+
+.attack-path-service {
+  font-size: .8125rem;
+  color: var(--sev-critical);
+  font-weight: 600;
+  margin-bottom: .2rem;
+}
+
+.attack-path-email {
+  font-size: .8125rem;
+  color: var(--text-2);
+}
+
+.attack-path-risk {
+  font-size: .75rem;
+  color: var(--text-muted);
+  margin-top: .25rem;
+  line-height: 1.4;
+}
+
+.attack-path-score {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .125rem;
+  min-width: 52px;
+}
+
+.attack-path-score-value {
+  font-size: 1.375rem;
+  font-weight: 800;
+  color: var(--sev-critical);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.attack-path-score-label {
+  font-size: .6rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
   .app-content { padding: 1rem; }
@@ -1351,6 +1545,15 @@ select option {
   .asset-card { padding: 1rem; }
 
   #toast-container { bottom: 1rem; right: 1rem; }
+
+  /* MSSP: на мобильном переходим в колоночный layout */
+  .mssp-client-card {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto auto;
+  }
+  .mssp-score { font-size: 1.25rem; }
+  .mssp-meta  { grid-column: 1 / -1; }
+  .mssp-plan  { grid-column: 1 / -1; }
 }
 
 @media (max-width: 480px) {

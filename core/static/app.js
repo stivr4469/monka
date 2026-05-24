@@ -357,6 +357,57 @@ class API {
   }
 
   /**
+   * POST /api/v1/scan/cookies
+   * Пассивная проверка живых сессий из стилер-лога (задача 9.C).
+   * @param {string} domain
+   * @param {string|null} [stealerLogId]
+   */
+  static async scanCookies(domain, stealerLogId = null) {
+    const body = { domain };
+    if (stealerLogId) body.stealer_log_id = stealerLogId;
+    const res = await this.request('/api/v1/scan/cookies', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!res) return null;
+    if (res.status === 404) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Стилер-архивы не найдены');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /** POST /api/v1/scan/takeover */
+  static async scanTakeover(domain) {
+    const res = await this.request('/api/v1/scan/takeover', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
+  /** POST /api/v1/scan/tls */
+  static async scanTls(domain) {
+    const res = await this.request('/api/v1/scan/tls', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
+  /**
    * GET /api/v1/billing/plan
    * Возвращает информацию о тарифном плане или null при ошибке (не бросает).
    * @returns {Promise<{plan:string,plan_label:string,domain_limit:number,domains_used:number,domains_remaining:number}|null>}
@@ -1517,6 +1568,173 @@ async function handleS3Scan() {
   }
 }
 
+/**
+ * Проверка поддоменов на Subdomain Takeover (задача 9.B).
+ * Резолвит CNAME → проверяет fingerprint уязвимого сервиса.
+ */
+async function handleTakeoverScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для проверки Subdomain Takeover');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+  const btn = document.getElementById('takeover-scan-btn');
+  setLoading(btn, true);
+  try {
+    const data = await API.scanTakeover(domain);
+    const checked = data.subdomains_checked || 0;
+    if (data.status === 'skipped') {
+      Toast.show('warning', 'Нет поддоменов для проверки', data.detail || 'Сначала запустите сканирование поддоменов');
+      addScanLog('warn', domain, `takeover: нет поддоменов`);
+    } else {
+      Toast.show('success', 'Takeover проверка запущена', `Проверяется ${checked} поддоменов для ${domain}`);
+      addScanLog('ok', domain, `takeover: запущен (${checked} поддоменов)`);
+    }
+  } catch (e) {
+    Toast.show('error', 'Ошибка Subdomain Takeover', e.message);
+    addScanLog('error', domain, `takeover: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/**
+ * TLS / JA4 fingerprinting (задача 9.A).
+ * Анализирует TLS-конфигурацию: версия, шифр, WAF, срок сертификата, JA4S.
+ */
+async function handleTlsScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для TLS/JA4 сканирования');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+  const btn = document.getElementById('tls-scan-btn');
+  setLoading(btn, true);
+  try {
+    await API.scanTls(domain);
+    Toast.show('success', 'TLS/JA4 сканирование запущено', `Анализ TLS-конфигурации для ${domain}`);
+    addScanLog('ok', domain, 'tls/ja4: запущен');
+  } catch (e) {
+    Toast.show('error', 'Ошибка TLS/JA4 сканирования', e.message);
+    addScanLog('error', domain, `tls/ja4: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/**
+ * Shodan Enrichment — обогащение данных о домене (задача 9.J).
+ * Запрашивает Shodan API для публичных IP домена, ищет Asset Drift.
+ * Graceful: если SHODAN_API_KEY не задан — показывает info, не ошибку.
+ */
+async function handleEnrichScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для Shodan Enrichment');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+
+  const btn = document.getElementById('enrich-scan-btn');
+  setLoading(btn, true);
+  try {
+    const res = await API.request('/api/v1/scan/enrich', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    const data = await res.json();
+
+    if (data.status === 'skipped') {
+      Toast.show('info', 'Shodan ключ не настроен', 'Добавьте SHODAN_API_KEY в .env для обогащения данных');
+      addScanLog('info', domain, 'shodan enrich: skipped (нет ключа)');
+    } else if (data.status === 'processing') {
+      Toast.show('success', 'Shodan Enrichment запущен', `Результаты появятся в Events (asset_drift)`);
+      addScanLog('ok', domain, 'shodan enrich: запущен в фоне');
+    } else {
+      Toast.show(
+        'success',
+        'Shodan Enrichment завершён',
+        `Проверено IP: ${data.ips_checked || 0}, скрытых портов: ${data.hidden_ports_found || 0}`,
+      );
+      addScanLog('ok', domain, `shodan enrich: IP=${data.ips_checked || 0}, скрытых портов=${data.hidden_ports_found || 0}`);
+    }
+  } catch (e) {
+    Toast.show('error', 'Ошибка Shodan Enrichment', e.message);
+    addScanLog('error', domain, `shodan enrich: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/**
+ * Проверка живых сессий из стилер-лога (задача 9.C).
+ * Пассивный HEAD-запрос — не генерирует алертов на WAF/EDR жертвы.
+ */
+async function handleCookieValidation() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен в поле выше');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+
+  const btn    = document.getElementById('cookie-validate-btn');
+  const status = document.getElementById('cookie-scan-status');
+
+  setLoading(btn, true);
+  if (status) {
+    status.style.display = 'block';
+    status.innerHTML = `
+      <div style="color:var(--accent);display:flex;align-items:center;gap:.5rem;font-size:.875rem">
+        <span class="spinner"></span>
+        Проверка живых сессий для <strong>${escHtml(domain)}</strong>… (до 30 секунд)
+      </div>`;
+  }
+
+  try {
+    const data = await API.scanCookies(domain);
+    addScanLog('ok', domain, 'cookie scan: запущен');
+
+    if (status) {
+      status.innerHTML = `
+        <div style="background:var(--success-bg);border:1px solid rgba(63,185,80,.3);
+                    border-radius:8px;padding:.875rem 1rem;color:var(--success);font-size:.875rem">
+          Проверка запущена для <strong>${escHtml(domain)}</strong>.
+          Результаты появятся в Events (event_type: active_session_leak).
+        </div>`;
+    }
+    Toast.show('success', 'Cookie-проверка запущена', `Домен: ${domain}`);
+
+  } catch (e) {
+    const isNotFound = e.message.includes('не найдены') || e.message.includes('not found');
+    if (isNotFound) {
+      Toast.show('warning', 'Стилер-архивы не найдены', 'Сначала загрузите ZIP-файл стилер-лога');
+    } else {
+      Toast.show('error', 'Ошибка проверки сессий', e.message);
+    }
+    addScanLog('error', domain, `cookie scan: ${e.message}`);
+    if (status) {
+      status.innerHTML = `
+        <div style="background:var(--danger-bg);border:1px solid rgba(248,81,73,.3);
+                    border-radius:8px;padding:.875rem 1rem;color:var(--danger);font-size:.875rem">
+          ${escHtml(e.message)}
+        </div>`;
+    }
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 async function handleDarknetScan() {
   const domainInput = document.getElementById('darknet-domain');
   const domain = domainInput?.value.trim() || '';
@@ -1623,6 +1841,10 @@ const TAB_LOADERS = {
   alerts:    () => { stopDashboardRefresh(); stopEventsPolling(); renderAlerts(); },
   scan:      () => { stopDashboardRefresh(); stopEventsPolling(); renderScan(); },
   darknet:   () => { stopDashboardRefresh(); stopEventsPolling(); renderDarknet(); },
+  // MSSP (задача 9.F): перезагружаем при каждом переключении на вкладку
+  mssp:      () => { stopDashboardRefresh(); stopEventsPolling(); loadMsspClients(); },
+  // Attack Graph (задача 9.E): показываем вкладку, данные загружаются по кнопке
+  graph:     () => { stopDashboardRefresh(); stopEventsPolling(); },
 };
 
 function switchTab(name) {
@@ -1921,6 +2143,234 @@ async function loadPlanInfo() {
 }
 
 // ─────────────────────────────────────────────
+// MSSP Multi-Tenancy панель (задача 9.F)
+// ─────────────────────────────────────────────
+
+/**
+ * Загружает и отрисовывает список клиентов MSSP-оператора.
+ *
+ * Показывает вкладку MSSP в навигации если у текущего пользователя
+ * есть доступ (is_mssp_operator или is_superuser).
+ * При 403 — вкладка остаётся скрытой и функция тихо завершается.
+ */
+async function loadMsspClients() {
+  const navTab = document.getElementById('mssp-nav-tab');
+  const listEl = document.getElementById('mssp-clients-list');
+
+  if (!listEl) return;
+
+  // Skeleton-загрузка
+  listEl.innerHTML = `
+    <div class="loading-skeleton skeleton-line" style="height:60px;margin-bottom:.5rem"></div>
+    <div class="loading-skeleton skeleton-line" style="height:60px;margin-bottom:.5rem;width:90%"></div>
+    <div class="loading-skeleton skeleton-line" style="height:60px;width:75%"></div>`;
+
+  try {
+    const res = await API.request('/api/v1/mssp/clients');
+
+    // 403 — пользователь не является MSSP-оператором, скрываем вкладку
+    if (res && res.status === 403) {
+      if (navTab) navTab.style.display = 'none';
+      listEl.innerHTML = '';
+      return;
+    }
+
+    if (!res || !res.ok) {
+      listEl.innerHTML = emptyStateHtml('Не удалось загрузить клиентов MSSP');
+      return;
+    }
+
+    // Доступ подтверждён — показываем вкладку
+    if (navTab) navTab.style.display = '';
+
+    const clients = await res.json();
+
+    if (!clients.length) {
+      listEl.innerHTML = `
+        <div class="mssp-empty">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <p style="margin-top:.5rem">Клиентов пока нет.<br>
+            Суперпользователь может привязать организации через<br>
+            <code>POST /api/v1/mssp/clients/{'{org_id}'}/assign</code>
+          </p>
+        </div>`;
+      return;
+    }
+
+    listEl.innerHTML = clients.map(c => _msspClientCardHtml(c)).join('');
+
+  } catch (err) {
+    listEl.innerHTML = emptyStateHtml('Ошибка загрузки MSSP-данных');
+    Toast.show('error', 'MSSP: ошибка', err.message);
+  }
+}
+
+/**
+ * Генерирует HTML карточки клиента MSSP.
+ * @param {Object} c — ClientRiskSummary от /api/v1/mssp/clients
+ * @returns {string}
+ */
+function _msspClientCardHtml(c) {
+  // Цвет Risk Score: зелёный 80+ / жёлтый 60+ / оранжевый 40+ / красный
+  const scoreColor = c.risk_score >= 80
+    ? '#22c55e'
+    : c.risk_score >= 60
+      ? '#eab308'
+      : c.risk_score >= 40
+        ? '#f97316'
+        : '#ef4444';
+
+  // Дельта: 0 = нейтральный, + = рост (зелёный ▲), - = падение (красный ▼)
+  const deltaStr = c.risk_delta_24h > 0
+    ? `<span style="color:#22c55e;font-weight:700">▲${c.risk_delta_24h}</span>`
+    : c.risk_delta_24h < 0
+      ? `<span style="color:#ef4444;font-weight:700">▼${Math.abs(c.risk_delta_24h)}</span>`
+      : `<span style="color:var(--text-muted)">━ 0</span>`;
+
+  // Визуальный акцент карточки по направлению delta
+  const cardClass = c.risk_delta_24h < 0
+    ? 'mssp-client-card mssp-degraded'
+    : c.risk_delta_24h > 0
+      ? 'mssp-client-card mssp-improved'
+      : 'mssp-client-card';
+
+  const criticalNote = c.critical_events > 0
+    ? `<span style="color:#ef4444;font-weight:600">${c.critical_events} крит.</span>`
+    : '0 крит.';
+
+  const lastSeen = c.last_event_at
+    ? `<br><span style="font-size:.75rem;color:var(--text-muted)">Последнее: ${fmtDate(c.last_event_at)}</span>`
+    : '';
+
+  const planKey = (c.plan || 'starter').toLowerCase();
+  const planClass = `mssp-plan plan-${escHtml(planKey)}`;
+
+  return `
+    <div class="${cardClass}" data-org-id="${escHtml(c.organization_id)}">
+      <div class="mssp-org-name" title="${escHtml(c.organization_name)}">
+        ${escHtml(c.organization_name)}
+      </div>
+      <div class="mssp-score" style="color:${scoreColor}"
+           title="Risk Score (0=плохо, 100=хорошо)">${c.risk_score}</div>
+      <div class="mssp-delta" title="Изменение рейтинга за 24 часа">${deltaStr} за 24ч</div>
+      <div class="mssp-meta">${c.domain_count} дом. &middot; ${criticalNote}${lastSeen}</div>
+      <span class="${planClass}">${escHtml(c.plan.toUpperCase())}</span>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────
+// Attack Graph — задача 9.E
+// ─────────────────────────────────────────────
+
+/**
+ * Загружает пути атаки для указанного домена из /api/v1/graph/{domain}/attack-paths.
+ * Домен берётся из поля #graph-domain-input.
+ */
+async function loadAttackPaths() {
+  const inputEl = document.getElementById('graph-domain-input');
+  const listEl  = document.getElementById('attack-paths-list');
+  if (!listEl) return;
+
+  const domain = inputEl ? inputEl.value.trim() : '';
+  if (!domain) {
+    listEl.innerHTML = `
+      <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+        Введите домен в поле выше и нажмите «Найти пути»
+      </div>`;
+    return;
+  }
+
+  // Skeleton во время загрузки
+  listEl.innerHTML = `
+    <div class="loading-skeleton skeleton-line" style="height:76px;margin-bottom:.5rem"></div>
+    <div class="loading-skeleton skeleton-line" style="height:76px;margin-bottom:.5rem;width:90%"></div>`;
+
+  try {
+    const res = await API.request(`/api/v1/graph/${encodeURIComponent(domain)}/attack-paths`);
+
+    if (!res || !res.ok) {
+      listEl.innerHTML = `
+        <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+          Не удалось получить данные графа (статус: ${res ? res.status : 'нет ответа'})
+        </div>`;
+      return;
+    }
+
+    const paths = await res.json();
+
+    if (!paths.length) {
+      listEl.innerHTML = `
+        <div style="text-align:center;padding:2.5rem 1rem;color:var(--text-muted)">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="1.2"
+               style="display:block;margin:0 auto .75rem;opacity:.4">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9 12l2 2 4-4"/>
+          </svg>
+          Путей атаки не обнаружено для <strong>${escHtml(domain)}</strong>.<br>
+          <span style="font-size:.8125rem;margin-top:.375rem;display:block">
+            Запустите сканирование портов и проверку стилер-логов — данные попадут в граф автоматически.
+          </span>
+        </div>`;
+      return;
+    }
+
+    listEl.innerHTML = paths.map(p => _attackPathCardHtml(p)).join('');
+
+  } catch (err) {
+    listEl.innerHTML = `
+      <div style="text-align:center;padding:2rem;color:var(--sev-critical)">
+        Ошибка: ${escHtml(err.message)}
+      </div>`;
+  }
+}
+
+/**
+ * Рендерит HTML-карточку одного пути атаки.
+ * @param {Object} p — элемент из /api/v1/graph/{domain}/attack-paths
+ * @returns {string}
+ */
+function _attackPathCardHtml(p) {
+  const isPortPath = p.attack_type === 'direct_access';
+  const score      = p.risk_score != null ? p.risk_score : 100;
+  const isMedium   = score < 95;
+
+  const portInfo = isPortPath && p.port
+    ? `${p.port}/${escHtml(p.service || '?')}`
+    : '';
+  const vulnInfo = !isPortPath && p.vuln
+    ? `${escHtml(p.vuln)} (${escHtml((p.severity || '').toUpperCase())})`
+    : '';
+  const serviceLabel = portInfo || vulnInfo;
+  const scoreColor   = score >= 95 ? 'var(--sev-critical)' : 'var(--sev-high)';
+
+  return `
+    <div class="attack-path-card${isMedium ? ' medium' : ''}">
+      <div class="attack-path-icon">${isPortPath ? '🔓' : '🔥'}</div>
+      <div class="attack-path-body">
+        <div class="attack-path-asset">${escHtml(p.asset || 'unknown')}</div>
+        ${serviceLabel
+          ? `<div class="attack-path-service">${serviceLabel}</div>`
+          : ''}
+        <div class="attack-path-email">
+          Утечка: <strong>${escHtml(p.leaked_email || '—')}</strong>
+        </div>
+        <div class="attack-path-risk">${escHtml(p.risk || '')}</div>
+      </div>
+      <div class="attack-path-score">
+        <span class="attack-path-score-value" style="color:${scoreColor}">${score}</span>
+        <span class="attack-path-score-label">риск</span>
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────
 // Инициализация приложения
 // ─────────────────────────────────────────────
 
@@ -1932,6 +2382,10 @@ function init() {
 
   // Загружаем информацию о тарифном плане (задача 8.I)
   loadPlanInfo();
+
+  // Проверяем доступ к MSSP-панели (задача 9.F).
+  // Тихая проверка при старте: если 403 — вкладка остаётся скрытой.
+  loadMsspClients();
 
   // Навигация
   document.querySelectorAll('.nav-tab').forEach(tab => {

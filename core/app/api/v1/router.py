@@ -6,12 +6,16 @@ from app.api.v1.endpoints import (
     auth,
     billing,
     breach,
+    cookie_scan,
     darknet_scan,
+    enrich_scan,
     events,
     github_scan,
+    graph,
     hardening_scan,
     ingest,
     internal_alerts,
+    mssp,
     paste_scan,
     phishing_scan,
     port_scan,
@@ -19,7 +23,9 @@ from app.api.v1.endpoints import (
     scheduled_scan,
     stealer,
     stealer_sources,
+    takeover_scan,
     telegram_scan,
+    tls_scan,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -44,6 +50,9 @@ api_router.include_router(hardening_scan.router)
 api_router.include_router(phishing_scan.router)
 api_router.include_router(port_scan.router)
 api_router.include_router(s3_scan.router)
+api_router.include_router(cookie_scan.router)
+api_router.include_router(takeover_scan.router)
+api_router.include_router(tls_scan.router)
 
 # Стилер-логи: загрузка файлов + автоматические источники
 api_router.include_router(stealer.router)
@@ -60,4 +69,13 @@ api_router.include_router(scheduled_scan.router)
 
 # SaaS биллинг и тарифные планы
 api_router.include_router(billing.router)
+
+# MSSP Multi-Tenancy (задача 9.F)
+api_router.include_router(mssp.router)
+
+# Attack Path Engine — Neo4j граф (задача 9.E)
+api_router.include_router(graph.router)
+
+# Shodan Enrichment — обогащение данных Asset Drift (задача 9.J)
+api_router.include_router(enrich_scan.router)
 

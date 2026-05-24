@@ -10,7 +10,8 @@ from app.models.asset import Asset
 from app.models.event import Event
 from app.models.organization import Organization
 from app.schemas.normalized_event import BulkIngestRequest, NormalizedEvent
-from app.services.opensearch_client import index_event
+from app.services.graph_client import upsert_event_to_graph
+from app.services.opensearch_client import index_event, index_leaked_credential
 from app.services.webhook import notify_critical_event
 from app.workers_client import ensure_workers_path, get_executor
 
@@ -116,19 +117,30 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
             source_name=event.source_name,
         )
 
-    # 7.C.1: Дублируем событие в OpenSearch асинхронно (не блокирует ответ)
-    asyncio.ensure_future(
-        index_event(db_event.id, {
-            "event_type":    db_event.event_type,
-            "severity":      db_event.severity,
-            "source_type":   db_event.source_type,
-            "source_name":   db_event.source_name,
-            "target_domain": db_event.target_domain,
-            "detected_at":   db_event.detected_at.isoformat() if db_event.detected_at else None,
-            "dedup_hash":    db_event.dedup_hash,
-            "payload":       db_event.payload or {},
-        })
+    # 7.C.1 / 9.I: Дублируем событие в OpenSearch асинхронно (не блокирует ответ).
+    # Credential-события (стилер / breach) идут в специализированный индекс
+    # easm-leaked-credentials с оптимизированным маппингом и ILM-политикой.
+    _os_event_data = {
+        "event_type":    db_event.event_type,
+        "severity":      db_event.severity,
+        "source_type":   db_event.source_type,
+        "source_name":   db_event.source_name,
+        "target_domain": db_event.target_domain,
+        "detected_at":   db_event.detected_at.isoformat() if db_event.detected_at else None,
+        "dedup_hash":    db_event.dedup_hash,
+        "payload":       db_event.payload or {},
+    }
+    _is_credential_event = (
+        event.source_type in ("stealer", "stealer_log", "breach")
+        or event.event_type in ("credential_leak", "active_session_leak", "stealer_log")
     )
+    if _is_credential_event:
+        asyncio.ensure_future(index_leaked_credential(str(db_event.id), _os_event_data))
+    else:
+        asyncio.ensure_future(index_event(db_event.id, _os_event_data))
+
+    # 9.E: Обновляем Neo4j-граф асинхронно (graceful: если Neo4j недоступен — игнорируем)
+    asyncio.ensure_future(upsert_event_to_graph(event.model_dump()))
 
     return {"status": "accepted", "event_id": db_event.id}
 
@@ -192,21 +204,31 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             logger.error("Ошибка bulk insert: %s", exc)
             errors = len(new_events)
 
-    # 7.C.1: Асинхронная индексация в OpenSearch
+    # 7.C.1 / 9.I: Асинхронная индексация в OpenSearch.
+    # Credential-события → easm-leaked-credentials, остальные → easm-events.
     for ev in new_events:
-        if ev.id:
-            asyncio.ensure_future(
-                index_event(ev.id, {
-                    "event_type":    ev.event_type,
-                    "severity":      ev.severity,
-                    "source_type":   ev.source_type,
-                    "source_name":   ev.source_name,
-                    "target_domain": ev.target_domain,
-                    "detected_at":   ev.detected_at.isoformat() if ev.detected_at else None,
-                    "dedup_hash":    ev.dedup_hash,
-                    "payload":       ev.payload or {},
-                })
-            )
+        if not ev.id:
+            continue
+        _ev_data = {
+            "event_type":    ev.event_type,
+            "severity":      ev.severity,
+            "source_type":   ev.source_type,
+            "source_name":   ev.source_name,
+            "target_domain": ev.target_domain,
+            "detected_at":   ev.detected_at.isoformat() if ev.detected_at else None,
+            "dedup_hash":    ev.dedup_hash,
+            "payload":       ev.payload or {},
+        }
+        _is_cred = (
+            ev.source_type in ("stealer", "stealer_log", "breach")
+            or ev.event_type in ("credential_leak", "active_session_leak", "stealer_log")
+        )
+        if _is_cred:
+            asyncio.ensure_future(index_leaked_credential(str(ev.id), _ev_data))
+        else:
+            asyncio.ensure_future(index_event(ev.id, _ev_data))
+        # 9.E: Neo4j-граф для каждого события батча
+        asyncio.ensure_future(upsert_event_to_graph(_ev_data))
 
     return {
         "status": "partial" if errors else "accepted",

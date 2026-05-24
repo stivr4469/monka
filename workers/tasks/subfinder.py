@@ -313,6 +313,24 @@ def scan_domain(self, domain: str) -> dict:
         logger.error("crt.sh: неожиданная ошибка при обработке домена %s: %s", domain, exc)
     # ─────────────────────────────────────────────────────────────────────────
 
+    # ── Subdomain Takeover Detection ─────────────────────────────────────────
+    # Проверяем все найденные поддомены на уязвимость к захвату.
+    # Ошибка детектора не ломает основной скан: обёрнуто в try/except.
+    takeover_result: dict = {"scanned": 0, "vulnerable": 0, "sent": 0}
+    if subdomains:
+        try:
+            from tasks.takeover_detector import scan_takeover
+            takeover_result = scan_takeover(
+                domain=domain,
+                subdomains=subdomains,
+                core_api_url=settings.CORE_API_URL,
+                internal_secret=settings.INTERNAL_API_SECRET,
+            )
+            logger.info("[subfinder] Takeover check: %s", takeover_result)
+        except Exception as exc:
+            logger.error("[subfinder] Ошибка takeover detection: %s", exc)
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Ставим задачи nuclei в очередь для каждого поддомена
     # Импортируем здесь чтобы избежать циклического импорта
     from workers.tasks.nuclei import scan_target
@@ -323,7 +341,13 @@ def scan_domain(self, domain: str) -> dict:
         )
     logger.info("subfinder: поставлено %d nuclei-задач для %s", len(subdomains), domain)
 
-    return {"domain": domain, "subdomains_sent": sent, "nuclei_queued": len(subdomains)}
+    return {
+        "domain": domain,
+        "subdomains_sent": sent,
+        "nuclei_queued": len(subdomains),
+        "takeover_scanned": takeover_result.get("scanned", 0),
+        "takeover_vulnerable": takeover_result.get("vulnerable", 0),
+    }
 
 
 @app.task(

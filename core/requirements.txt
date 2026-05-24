@@ -20,3 +20,5 @@ structlog==25.5.0
 sentry-sdk==2.60.0
 # PDF generation (задача 8.E)
 reportlab==4.2.2
+# Neo4j — Attack Path Engine (задача 9.E)
+neo4j==5.20.0

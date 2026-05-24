@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 
 from crypto import encrypt_password
 from tasks.bulk_ingest import bulk_ingest
+from tasks.cookie_validator import validate_cookies_from_zip
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,18 @@ def parse_stealer_log(
         result = bulk_ingest(events_batch, core_api_url, internal_secret)
         sent = result["sent"]
         errors = result["errors"]
+
+        # 9.C: проверка активности сессионных кук (только для ZIP-архивов стилеров)
+        if is_zip and target_domains:
+            try:
+                # Используем первый домен как основной для фильтрации
+                primary_domain = target_domains[0]
+                cookie_result = validate_cookies_from_zip(
+                    file_path, primary_domain, core_api_url, internal_secret
+                )
+                logger.info("[stealer] Куки проверены: %s", cookie_result)
+            except Exception as exc:
+                logger.warning("[stealer] Ошибка валидации куков: %s", exc)
 
     except Exception as exc:
         logger.error("[stealer] Критическая ошибка парсинга: %s", exc)

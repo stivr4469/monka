@@ -19,6 +19,12 @@ from app.middleware.logging_middleware import LoggingMiddleware
 from app.models.base import Base
 from app.models.organization import Organization
 from app.models.user import User
+from app.services.graph_client import close_driver, ensure_constraints
+from app.services.opensearch_client import (
+    create_ilm_policy,
+    ensure_index_exists,
+    ensure_leaked_creds_index,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,7 +56,23 @@ async def lifespan(app: FastAPI):
             user.organization_id = org.id
             await db.commit()
             logger.info("Суперпользователь создан: %s", settings.FIRST_SUPERUSER_EMAIL)
+
+    # 7.C.1: OpenSearch — создаём общий индекс событий (graceful degradation)
+    await ensure_index_exists()
+
+    # 9.I: OpenSearch — специализированный индекс для credential-утечек
+    await ensure_leaked_creds_index()
+
+    # 9.I: OpenSearch ILM-политика hot→warm→cold для easm-leaked-credentials
+    await create_ilm_policy()
+
+    # 9.E: Neo4j — создаём constraints если сервер доступен (graceful degradation)
+    await ensure_constraints()
+
     yield
+
+    # Graceful shutdown — закрываем Neo4j-соединение
+    await close_driver()
 
 
 app = FastAPI(
