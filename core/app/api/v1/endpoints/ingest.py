@@ -9,6 +9,7 @@ from app.api.deps import DBDep, verify_internal_secret
 from app.core.config import settings
 from app.models.asset import Asset
 from app.models.event import Event
+from app.models.notification import Notification
 from app.models.organization import Organization
 from app.schemas.normalized_event import BulkIngestRequest, NormalizedEvent
 from app.services.graph_client import upsert_event_to_graph
@@ -195,6 +196,22 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
             detected_at=db_event.detected_at,
             source_name=event.source_name,
         )
+
+    # 10.I: Создаём уведомление в центре нотификаций для critical-событий
+    if event.severity == "critical" and asset is not None:
+        try:
+            notif = Notification(
+                org_id=asset.organization_id,
+                event_id=db_event.id,
+                message=f"\U0001f6a8 {event.event_type}: {event.target_domain}",
+                severity="critical",
+                is_read=False,
+            )
+            db.add(notif)
+            await db.commit()
+        except Exception as exc:
+            logger.warning("[ingest] Ошибка создания уведомления: %s", exc)
+            await db.rollback()
 
     # 7.C.1 / 9.I: Дублируем событие в OpenSearch асинхронно (не блокирует ответ).
     # Credential-события (стилер / breach) идут в специализированный индекс

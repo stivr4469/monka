@@ -332,4 +332,55 @@ async def deactivate_schedule(
     return {"status": "deactivated", "id": schedule_id}
 
 
+@router.get(
+    "/beat-schedules",
+    summary="Список Beat-расписаний Celery (10.H)",
+)
+async def list_beat_schedules(current_user: CurrentUser) -> list[dict]:
+    """
+    10.H: Возвращает информацию о всех автоматических Celery Beat расписаниях.
+
+    Расписания фиксированы в конфигурации — не редактируются через UI.
+    Для изменения — обновить workers/celery_app.py и перезапустить celery beat.
+    """
+    return [
+        {
+            "name": "subdomain-scan",
+            "task": "workers.tasks.subfinder.scan_domain_all_active",
+            "schedule": "Ежедневно в 02:00 UTC",
+            "description": "Инвентаризация поддоменов через subfinder и crt.sh",
+        },
+        {
+            "name": "nuclei-scan",
+            "task": "workers.tasks.nuclei.scan_all_active_targets",
+            "schedule": "Ежедневно в 03:00 UTC",
+            "description": "Сканирование уязвимостей через Nuclei",
+        },
+        {
+            "name": "port-scan",
+            "task": "workers.tasks.port_scanner.run_port_scan_all_assets",
+            "schedule": "Ежедневно в 04:00 UTC",
+            "description": "Сканирование открытых портов через nmap",
+        },
+        {
+            "name": "tech-profile",
+            "task": "workers.tasks.tech_profiler.run_tech_profiler_all_assets",
+            "schedule": "Ежедневно в 05:00 UTC",
+            "description": "Профилирование технологий и End-of-Life ПО",
+        },
+        {
+            "name": "darknet-monitor",
+            "task": "workers.tasks.ransomware_sites.run_darknet_monitor_all_assets",
+            "schedule": "Каждый час (minute=0)",
+            "description": "Мониторинг ransomware-сайтов даркнета",
+        },
+        {
+            "name": "telegram-monitor",
+            "task": "workers.tasks.telegram_monitor.run_telegram_monitor_all_assets",
+            "schedule": "Каждые 15 минут (*/15)",
+            "description": "Мониторинг Telegram-каналов на утечки",
+        },
+    ]
+
+
 # ROUTER: api_router.include_router(scheduled_scan.router)
