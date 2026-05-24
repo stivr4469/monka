@@ -14,9 +14,10 @@
 import logging
 import os
 import time
-from datetime import datetime, timezone
 
 import httpx
+
+from crypto import encrypt_password
 
 logger = logging.getLogger(__name__)
 
@@ -48,19 +49,23 @@ def _send_events(
     core_api_url: str,
     internal_secret: str,
 ) -> tuple[int, int]:
-    """Отправляет записи в Core API. Возвращает (sent, errors)."""
+    """Шифрует пароль и отправляет записи в Core API. Возвращает (sent, errors)."""
     url = f"{core_api_url}/api/v1/internal/ingest"
     headers = {"Authorization": f"Bearer {internal_secret}"}
     sent = errors = 0
 
     for rec in records:
+        payload = dict(rec)
+        raw_pwd = payload.pop("password", "")
+        payload["password_enc"] = encrypt_password(raw_pwd, internal_secret)
+
         event = {
             "event_type": "stealer_log",
             "severity": "critical",
             "source_type": "stealer_source",
             "source_name": source_name,
             "target_domain": domain,
-            "payload": rec,
+            "payload": payload,
         }
         try:
             r = httpx.post(url, json=event, headers=headers, timeout=10)

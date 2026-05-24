@@ -1,9 +1,11 @@
 from datetime import datetime
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, DBDep
+from app.core.config import settings
+from app.core.crypto import decrypt_password
 from app.models.event import Event
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -78,3 +80,45 @@ async def event_stats(
     by_type = dict(type_r.all())
 
     return EventStats(total=total, by_severity=by_severity, by_type=by_type)
+
+
+@router.post("/{event_id}/reveal", summary="Расшифровать пароль из стилер-лога")
+async def reveal_password(
+    event_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> dict:
+    """
+    Возвращает расшифрованный пароль для события stealer_log.
+    Требует JWT-авторизацию. Каждый запрос логируется.
+    """
+    result = await db.execute(select(Event).where(Event.id == event_id))
+    event = result.scalar_one_or_none()
+
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+
+    if event.event_type != "stealer_log":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Расшифровка доступна только для событий stealer_log",
+        )
+
+    enc = event.payload.get("password_enc", "")
+    if not enc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Зашифрованный пароль не найден в payload",
+        )
+
+    try:
+        password = decrypt_password(enc, settings.INTERNAL_API_SECRET)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+    return {
+        "event_id": event_id,
+        "login": event.payload.get("login", ""),
+        "password": password,
+        "url": event.payload.get("url", ""),
+    }

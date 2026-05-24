@@ -16,7 +16,7 @@ from app.schemas.normalized_event import NormalizedEvent
 logger = logging.getLogger(__name__)
 
 # Подключаем воркер Telegram-алертов
-_WORKERS_PATH = str(Path(__file__).parents[6] / "workers")
+_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
 if _WORKERS_PATH not in sys.path:
     sys.path.insert(0, _WORKERS_PATH)
 

@@ -35,7 +35,7 @@ router = APIRouter(prefix="/schedule", tags=["schedule"])
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="scan_worker")
 
 # Добавляем workers в sys.path для импорта воркеров
-_workers_path = str(Path(__file__).parents[6] / "workers")
+_workers_path = str(Path(__file__).parents[5] / "workers")
 if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 

@@ -28,7 +28,7 @@ router = APIRouter(prefix="/breach", tags=["breach"])
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="breach")
 
 # Подключаем workers к sys.path (как в stealer.py и github_scan.py)
-_WORKERS_PATH = str(Path(__file__).parents[6] / "workers")
+_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
 if _WORKERS_PATH not in sys.path:
     sys.path.insert(0, _WORKERS_PATH)
 

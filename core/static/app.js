@@ -644,6 +644,28 @@ async function loadEventsPage() {
   }
 }
 
+function _payloadHtml(ev) {
+  if (ev.event_type !== 'stealer_log') {
+    return `<pre class="json-pre">${escHtml(prettyJson(ev.payload))}</pre>`;
+  }
+  // Stealer-log: показываем login/url открыто, пароль скрыт
+  const p = ev.payload || {};
+  const hasEnc = !!p.password_enc;
+  return `
+    <div style="display:grid;gap:.35rem;font-size:.8125rem;font-family:var(--font-mono)">
+      <div><span style="color:var(--text-muted)">URL:   </span><span>${escHtml(p.url || '—')}</span></div>
+      <div><span style="color:var(--text-muted)">Login: </span><span>${escHtml(p.login || '—')}</span></div>
+      <div style="display:flex;align-items:center;gap:.6rem">
+        <span style="color:var(--text-muted)">Pass:  </span>
+        <span id="pwd-${escHtml(ev.id)}">***</span>
+        ${hasEnc ? `<button class="btn btn-ghost btn-sm" style="font-size:.75rem;padding:.15rem .5rem"
+          onclick="revealPassword('${escHtml(ev.id)}')">Показать</button>` : ''}
+      </div>
+      ${p.source_file ? `<div><span style="color:var(--text-muted)">File:  </span><span>${escHtml(p.source_file)}</span></div>` : ''}
+      ${p.channel    ? `<div><span style="color:var(--text-muted)">Chan:  </span><span>${escHtml(p.channel)}</span></div>` : ''}
+    </div>`;
+}
+
 function buildEventsTable(events) {
   const tbody = document.getElementById('events-tbody');
   if (!events.length) {
@@ -661,10 +683,39 @@ function buildEventsTable(events) {
     </tr>
     <tr class="row-detail" id="detail-${escHtml(ev.id)}">
       <td colspan="6" style="padding:.75rem 1rem 1rem 2.5rem">
-        <strong style="color:var(--text-secondary);font-size:.8125rem">Payload:</strong>
-        <pre class="json-pre">${escHtml(prettyJson(ev.payload))}</pre>
+        <strong style="color:var(--text-secondary);font-size:.8125rem;display:block;margin-bottom:.4rem">Payload:</strong>
+        ${_payloadHtml(ev)}
       </td>
     </tr>`).join('');
+}
+
+async function revealPassword(eventId) {
+  const el  = document.getElementById(`pwd-${eventId}`);
+  const btn = el && el.nextElementSibling;
+  if (!el) return;
+
+  if (el.dataset.revealed === '1') {
+    // Скрыть обратно
+    el.textContent = '***';
+    el.dataset.revealed = '0';
+    if (btn) btn.textContent = 'Показать';
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    const res  = await API.request(`/api/v1/events/${eventId}/reveal`, { method: 'POST' });
+    if (!res) return;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    el.textContent      = data.password || '(пусто)';
+    el.dataset.revealed = '1';
+    el.style.color      = 'var(--sev-critical)';
+    if (btn) { btn.textContent = 'Скрыть'; btn.disabled = false; }
+  } catch (err) {
+    Toast.show('error', 'Ошибка расшифровки', err.message);
+    if (btn) btn.disabled = false;
+  }
 }
 
 function buildPagination(total) {

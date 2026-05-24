@@ -18,12 +18,15 @@
 """
 import io
 import logging
+import os
 import re
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+
+from crypto import encrypt_password
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +199,8 @@ def parse_stealer_log(
                     continue
 
                 matched += 1
+                raw_pwd = rec.get("password", "")
+                enc_pwd = encrypt_password(raw_pwd, internal_secret)
 
                 event = {
                     "event_type": "stealer_log",
@@ -206,7 +211,7 @@ def parse_stealer_log(
                     "payload": {
                         "url": rec.get("url", ""),
                         "login": rec.get("login", ""),
-                        "password": rec.get("password", ""),
+                        "password_enc": enc_pwd,
                         "source_file": src_filename,
                     },
                 }
