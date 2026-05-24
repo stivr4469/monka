@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, new_uuid
@@ -14,6 +14,8 @@ class Asset(Base, TimestampMixin):
     domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Коэффициент важности актива для формулы risk-score (диапазон 0.1–2.0, по умолчанию 1.0)
+    importance: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
 
     organization_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False

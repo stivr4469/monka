@@ -157,6 +157,326 @@ Begin by setting up the project structure and writing the initial files for Step
 
 ---
 
+---
+
+## Фаза 7: Масштабируемость и Production-оптимизация (Аудит)
+
+**Цель:** Устранить архитектурные ограничения при экстремальных нагрузках.
+**Источник:** Технический аудит кодовой базы (май 2026).
+
+---
+
+### 7.A Стриминговый парсинг ZIP-архивов стилеров (OOM-fix)
+
+**Проблема:** `parse_stealer_log(file_bytes: bytes)` загружает весь ZIP в RAM → OOM на файлах >1GB.
+
+- [ ] **7.A.1** В эндпоинте загрузки стилера (`POST /api/v1/stealer/upload`) — сохранять файл на диск (`/tmp/stealer_<uuid>.zip`) вместо `await file.read()` в память
+- [ ] **7.A.2** Переписать `workers/tasks/stealer_parser.py` — принимать `file_path: Path` вместо `file_bytes: bytes`, открывать `zipfile.ZipFile(file_path)` с диска
+- [ ] **7.A.3** Построчная итерация файлов внутри ZIP через `io.TextIOWrapper(zf.open(member))` без буферизации в RAM
+- [ ] **7.A.4** После обработки удалять временный файл с диска
+- [ ] **7.A.5** Добавить тест: парсинг ZIP-файла 100MB без превышения 50MB RAM
+
+### 7.B Bulk Ingest API (устранение N×HTTP бутылочного горлышка)
+
+**Проблема:** Каждая запись → отдельный `httpx.post()` → 10,000 записей = 10,000 HTTP-запросов.
+
+- [ ] **7.B.1** Добавить схему `BulkIngestRequest(events: list[NormalizedEvent], max_length=1000)` в `core/app/schemas/normalized_event.py`
+- [ ] **7.B.2** Реализовать `POST /api/v1/internal/ingest/bulk` в `core/app/api/v1/endpoints/ingest.py` — один запрос к БД для проверки дублей (`dedup_hash IN (...)`), `db.add_all()` для вставки
+- [ ] **7.B.3** Добавить `bulk_ingest()` helper в `workers/tasks/` — накапливает батч до 500 записей, отправляет одним POST
+- [ ] **7.B.4** Переключить `darknet_monitor.py` на батчевую отправку вместо построчной
+- [ ] **7.B.5** Переключить `stealer_parser.py` на батчевую отправку
+- [ ] **7.B.6** Добавить тест: 1000 событий bulk insert быстрее 10 секунд
+
+### 7.C OpenSearch как Data Lake для событий
+
+**Проблема:** Все события хранятся в PostgreSQL → деградация при >10M записей, нет fuzzy-поиска.
+
+- [ ] **7.C.1** В `core/app/api/v1/endpoints/ingest.py` — после записи в PostgreSQL дублировать событие в OpenSearch (`opensearch_client.index()`) асинхронно (не блокировать ответ)
+- [ ] **7.C.2** Создать `core/app/services/opensearch_client.py` — обёртка над `opensearch-py` с connection pool и retry
+- [ ] **7.C.3** Создать индекс `easm-events` с маппингом (`keyword` для `event_type`/`severity`, `text` для `payload`)
+- [ ] **7.C.4** Добавить `GET /api/v1/events/search?q=<fulltext>` — поиск через OpenSearch с fallback на PostgreSQL если OS недоступен
+- [ ] **7.C.5** Сохранить PostgreSQL как source of truth для метаданных; OS только для поиска
+
+### 7.D Domain Hardening — EASM периметр-чек
+
+**Проблема:** Платформа ищет утечки пассивно, но не проверяет активные дыры в периметре.
+
+- [ ] **7.D.1** Установить `dnspython` в `workers/requirements.txt`
+- [ ] **7.D.2** Создать `workers/tasks/domain_hardening.py` — проверки: SPF TXT-запись, DMARC на `_dmarc.<domain>`, DNS Zone Transfer (AXFR), просроченный SSL-сертификат
+- [ ] **7.D.3** Каждая найденная проблема → `NormalizedEvent(event_type="vulnerability", severity=medium/high/critical, source_name="domain_hardening")`
+- [ ] **7.D.4** Добавить `POST /api/v1/scan/hardening` эндпоинт в core (аналогично `/scan/darknet`)
+- [ ] **7.D.5** Добавить кнопку «Проверить периметр» в UI на вкладке Scan
+- [ ] **7.D.6** Добавить тест: SPF-отсутствие на домене без TXT → severity=medium событие
+
+---
+
+## Фаза 8: EASM + DRPS — Собственный Data Lake и Recon Pipeline (new_vision.md)
+
+**Цель:** Убрать зависимость от платных API, накопить собственные данные, реализовать полноценный инфраструктурный конвейер разведки.
+**Источник:** BRD документ new_vision.md (май 2026).
+
+---
+
+### 8.A Certificate Transparency — пассивный сбор поддоменов
+
+**Проблема:** subfinder частично покрывает CT-логи, но нет прямого запроса к crt.sh по домену.
+
+- [x] **8.A.1** Добавить функцию `fetch_crt_sh(domain)` в `workers/tasks/subfinder.py` — GET `https://crt.sh/?q=%.{domain}&output=json`, извлекать `name_value`, дедуплицировать
+- [x] **8.A.2** Результаты crt.sh слать через `bulk_ingest()` как `event_type=subdomain, source_name=crt.sh`
+- [ ] **8.A.3** Добавить ASN/IP resolution — для каждого поддомена резолвить IP через `socket.getaddrinfo`, сохранять в payload
+- [ ] **8.A.4** Маркировать IP крупных облаков (AWS/GCP/Azure/Cloudflare) через ip-ranges JSON — флаг `cloud_provider` в payload
+
+---
+
+### 8.B Risk Score — улучшение формулы (Time Decay + Asset Importance)
+
+**Проблема:** Текущий Risk Score — простая сумма весов без учёта давности события и важности актива.
+
+- [x] **8.B.1** В `GET /api/v1/assets/{id}/risk-score` — заменить формулу: `S = max(0, 100 - Σ W(sev_i) × T(t_i) × A(importance_i))`
+- [x] **8.B.2** Реализовать `T(t) = e^(-0.005 × Δt_days)` — события давностью 140 дней весят вдвое меньше
+- [x] **8.B.3** Веса: `critical=25, high=10, medium=4, low=1, info=0` (было: 25/10/5/0)
+- [x] **8.B.4** Добавить поле `asset_importance` (float, default=1.0) в модель Asset — основной домен = 1.5, поддомен = 0.7
+- [ ] **8.B.5** Эндпоинт `PATCH /api/v1/assets/{id}` — принимать `importance` (0.1–2.0) для ручной настройки
+
+---
+
+### 8.C Phishing Domain Detection — тайпосквоттинг
+
+**Проблема:** Конкуренты не предлагают обнаружение фишинговых доменов. Это наше конкурентное преимущество.
+
+- [x] **8.C.1** Создать `workers/tasks/phishing_detector.py` — генерация тайпосквот-вариантов домена (замена букв, добавление дефиса, перестановки)
+- [x] **8.C.2** Проверка регистрации через DNS резолв — если домен резолвится и похож на целевой — событие
+- [x] **8.C.3** `NormalizedEvent(event_type="vulnerability", severity="high", source_name="phishing_detector", payload={"typosquat": "v1sa.com", "original": "visa.com", "technique": "vowel_swap"})`
+- [x] **8.C.4** Добавить `POST /api/v1/scan/phishing` эндпоинт — запуск в фоне
+- [x] **8.C.5** Добавить кнопку «Проверить фишинг» в UI на вкладке Darknet рядом с «Проверить периметр»
+
+---
+
+### 8.D Telegram — расширение до 25+ каналов
+
+**Проблема:** Текущий список DEFAULT_LEAK_CHANNELS — только 6 каналов. В new_vision.md указано 50+.
+
+- [x] **8.D.1** Расширить `DEFAULT_LEAK_CHANNELS` в `workers/tasks/telegram_monitor.py` до 25+ каналов: добавить LummaC2Logs, StealerLogs, logsmafia, leaks_logs, combolists, dumpz_to и другие публичные каналы утечек
+
+---
+
+### 8.E PDF-отчёт по безопасности
+
+**Проблема:** Нет автоматической генерации отчёта для клиента / совета директоров.
+
+- [ ] **8.E.1** Добавить `reportlab` или `weasyprint` в `core/requirements.txt`
+- [ ] **8.E.2** Создать `core/app/services/report_generator.py` — шаблон отчёта: Risk Score, топ-10 событий, разбивка по категориям (Сеть/Почта/Утечки/Веб)
+- [ ] **8.E.3** Добавить `GET /api/v1/assets/{id}/report.pdf` — генерация и отдача PDF
+- [ ] **8.E.4** Кнопка «Скачать отчёт PDF» в UI на вкладке Assets
+
+---
+
+### 8.F Phishing + Asset Drift — оповещение об изменениях периметра
+
+**Проблема:** Нет уведомления когда на периметре появился новый поддомен или порт.
+
+- [ ] **8.F.1** В `workers/tasks/subfinder.py` — при обнаружении нового поддомена (не существовал в Assets) — severity=medium вместо info
+- [ ] **8.F.2** Добавить поле `first_seen_at` в модель Event — для отображения когда впервые замечен актив
+- [ ] **8.F.3** На дашборде — виджет «Новые активы за 24 часа»
+
+---
+
+### 8.G Masscan + Nmap интеграция (порты)
+
+**Проблема:** Нет сканирования открытых портов — это core EASM-функция.
+
+- [ ] **8.G.1** Создать `workers/tasks/port_scanner.py` — запуск `nmap -p top1000 --open -T4 {ip}` через subprocess (shell=False)
+- [ ] **8.G.2** Парсить вывод nmap XML (`-oX -`) — извлекать port/state/service/version
+- [ ] **8.G.3** `NormalizedEvent(event_type="exposed_service", severity=medium, source_name="nmap", payload={"port": 8080, "service": "http", "version": "Apache 2.4.41", "ip": "1.2.3.4"})`
+- [ ] **8.G.4** Добавить `POST /api/v1/scan/ports` эндпоинт
+- [ ] **8.G.5** Добавить чипсел «Ports» в модуль-выборе на вкладке Scan
+
+---
+
+### 8.H S3 Bucket Discovery
+
+**Проблема:** Открытые S3-корзины с данными компании — частая и критичная уязвимость.
+
+- [ ] **8.H.1** Создать `workers/tasks/s3_scanner.py` — генерация имён бакетов по шаблонам: `{company}-prod`, `{company}-backup`, `{company}-assets`, `{company}-logs` и т.д. (50+ шаблонов)
+- [ ] **8.H.2** HEAD-запрос к `https://{bucket}.s3.amazonaws.com` — если 200/403 → бакет существует; если `x-amz-bucket-region` в хедерах — открыт
+- [ ] **8.H.3** `NormalizedEvent(event_type="exposed_service", severity="critical", source_name="s3_scanner")`
+- [ ] **8.H.4** Добавить `POST /api/v1/scan/s3` эндпоинт
+
+---
+
+### 8.I SaaS Тарифные планы (Billing)
+
+**Проблема:** Нет ограничений по тарифу — все клиенты получают неограниченный доступ.
+
+- [ ] **8.I.1** Добавить поле `plan` (enum: starter/professional/enterprise) в модель Organization
+- [ ] **8.I.2** Лимиты: starter=3 домена, professional=10, enterprise=безлимит
+- [ ] **8.I.3** В `POST /api/v1/assets/` — проверять лимит доменов по плану → 402 Payment Required если превышен
+- [ ] **8.I.4** На дашборде — бейдж текущего плана и счётчик использованных доменов
+
+---
+
+### 8.J Senior Code Review (финальная проверка)
+
+- [ ] Run full senior code review.
+- [ ] Refactor weak parts.
+- [ ] Optimize architecture.
+- [ ] Add missing production features.
+
+---
+
+## Фаза 9: Глубокая разведка и Attack Path Engine (new_vision.md v2)
+
+**Цель:** Реализовать уникальные конкурентные преимущества платформы — Neo4j граф
+путей атак, Session Cookie Validation, JA4 fingerprinting, MSSP UI и Human OSINT.
+**Источник:** BRD new_vision.md Разделы 2–7 (обновлён май 2026).
+
+---
+
+### 9.A JA4/TLS Fingerprinting — детекция WAF и теневой инфраструктуры
+
+**Зачем:** Определить скрытые WAF, балансировщики, C2-панели по TLS-отпечатку.
+
+- [ ] **9.A.1** Установить `ja4` / `tlsfinger` или использовать `pyopenssl` + ручной анализ хендшейка
+- [ ] **9.A.2** Создать `workers/tasks/tls_fingerprinter.py` — подключение через `ssl.SSLContext`, извлечение cipher suites, extensions, TLS version → JA4 hash
+- [ ] **9.A.3** Сравнивать JA4-хеш с базой WAF-сигнатур (Cloudflare=X, AWS WAF=Y, Akamai=Z)
+- [ ] **9.A.4** `NormalizedEvent(event_type="tls_fingerprint", severity="info/medium", payload={"ja4": "...", "waf_detected": "Cloudflare"})`
+- [ ] **9.A.5** Добавить `POST /api/v1/scan/tls` эндпоинт
+- [ ] **9.A.6** Добавить кнопку «TLS/JA4 Scan» в UI на вкладке Scan
+
+---
+
+### 9.B Subdomain Takeover Detection
+
+**Зачем:** CNAME на удалённый удалённый сервис = возможность захвата поддомена.
+
+- [ ] **9.B.1** В `workers/tasks/subfinder.py` — для каждого поддомена с CNAME-записью проверять статус внешнего ресурса
+- [ ] **9.B.2** Список уязвимых fingerprints: GitHub Pages (404 + "There isn't a GitHub Pages site here"), S3 (NoSuchBucket), Heroku (No such app), Shopify, Fastly
+- [ ] **9.B.3** При совпадении fingerprint → `NormalizedEvent(event_type="vulnerability", severity="critical", source_name="takeover_detector")`
+- [ ] **9.B.4** Добавить тест: мок CNAME + 404 с GitHub fingerprint → critical событие
+
+---
+
+### 9.C Session Cookie Validation — УНИКАЛЬНАЯ ФИЧА
+
+**Зачем:** Живые session cookies из стилер-логов = прямой доступ к системам без пароля.
+Нет у конкурентов. Максимальный risk score при обнаружении.
+
+- [ ] **9.C.1** В `workers/tasks/stealer_parser.py` — парсить секцию Cookies (Netscape/JSON формат) из ZIP-архивов стилеров
+- [ ] **9.C.2** Создать `workers/tasks/cookie_validator.py` — для каждого найденного session cookie
+- [ ] **9.C.3** Отправлять пассивный `HEAD` запрос к оригинальному хосту (из поля `host` куки) с заголовком `Cookie: <leaked_cookie_value>`
+- [ ] **9.C.4** Анализировать ответ: HTTP 200/302 без redirect на login = **ЖИВАЯ СЕССИЯ**; 401/403/redirect → expired
+- [ ] **9.C.5** Живая сессия → `NormalizedEvent(event_type="active_session_leak", severity="critical", payload={"host": "...", "user": "...", "cookie_name": "...", "session_alive": true})`
+- [ ] **9.C.6** Мёртвая сессия → `NormalizedEvent(severity="medium", payload={"session_alive": false})`
+- [ ] **9.C.7** Добавить `POST /api/v1/scan/cookies` эндпоинт — запуск валидации для конкретного stealer_log_id
+- [ ] **9.C.8** В UI — иконка "🔴 LIVE SESSION" рядом с соответствующей записью в стилер-логах
+
+---
+
+### 9.D Human OSINT — профилирование сотрудников
+
+**Зачем:** Определить VIP-цели для фишинга и вектор компрометации через сотрудников.
+
+- [ ] **9.D.1** Создать `workers/tasks/human_osint.py` — поиск профилей по паттерну `site:linkedin.com "<domain>"` через DuckDuckGo/SerpAPI
+- [ ] **9.D.2** Извлекать имена → генерировать паттерны корпоративной почты: `{f}.{last}@domain.com`, `{first}@domain.com`, `{first}{last}@domain.com`
+- [ ] **9.D.3** Поиск GitHub аккаунтов разработчиков компании через GitHub API `GET /search/users?q={domain}+in:email`
+- [ ] **9.D.4** `NormalizedEvent(event_type="human_intel", severity="low", payload={"name": "John Doe", "title": "DevOps Engineer", "email_pattern": "j.doe@target.com", "linkedin_url": "..."})`
+- [ ] **9.D.5** Добавить `POST /api/v1/scan/human-osint` эндпоинт
+- [ ] **9.D.6** Добавить вкладку «Сотрудники» в UI с таблицей найденных профилей
+
+---
+
+### 9.E Neo4j Attack Path Engine — граф путей атаки
+
+**Зачем:** Связать все находки в единую модель и математически доказать возможность атаки.
+
+- [ ] **9.E.1** Добавить `neo4j` в `docker-compose.yml` (neo4j:5, bolt port 7687)
+- [ ] **9.E.2** Добавить `neo4j` Python driver в `core/requirements.txt`
+- [ ] **9.E.3** Создать `core/app/services/graph_client.py` — асинхронный Neo4j клиент с retry
+- [ ] **9.E.4** Схема нод: `Domain`, `Asset` (subdomain), `IPAddress`, `Port`, `Vulnerability`, `CredentialLeak`, `StealerLog`
+- [ ] **9.E.5** Схема рёбер: `has_subdomain`, `has_ip`, `has_port`, `has_vuln`, `member_of_asn`, `associated_with`, `leaked_in`
+- [ ] **9.E.6** В `ingest.py` — после записи события в PostgreSQL создавать/обновлять нод в Neo4j
+- [ ] **9.E.7** При `severity=critical` события — запускать Cypher `MATCH p=shortestPath((a:External)-[*]→(c:CrownJewel))` для поиска пути атаки
+- [ ] **9.E.8** Если путь найден — генерировать системный алерт `attack_path_found` с Risk Score=100
+- [ ] **9.E.9** Добавить `GET /api/v1/assets/{domain}/attack-graph` — возвращает JSON графа для визуализации
+- [ ] **9.E.10** Визуализировать граф в UI через D3.js или Vis.js
+
+---
+
+### 9.F MSSP Multi-Tenancy UI — панель партнёра
+
+**Зачем:** MSSP-провайдеры управляют безопасностью сотен клиентов — нужна общая панель.
+
+- [ ] **9.F.1** Добавить роль `mssp_operator` в модель User — может видеть все организации своего MSSP-аккаунта
+- [ ] **9.F.2** Создать `GET /api/v1/mssp/clients` — список всех клиентов с текущим Risk Score и тенденцией (дельта за 24ч)
+- [ ] **9.F.3** Добавить вкладку «Клиенты» в UI (только для роли mssp_operator)
+- [ ] **9.F.4** Таблица клиентов: название, домен, Risk Score, delta(24h), количество критических событий
+- [ ] **9.F.5** Сортировка по деградации рейтинга по умолчанию (самые опасные ситуации наверху)
+- [ ] **9.F.6** Цветовая индикация: 80–100=зелёный, 60–79=жёлтый, 40–59=оранжевый, 0–39=красный
+
+---
+
+### 9.G Executive PDF Report — отчёт для руководства
+
+**Зачем:** Технический PDF для инженеров (8.E) + Executive Report для CEO/CFO/страховщиков.
+
+- [ ] **9.G.1** Создать второй шаблон в `core/app/services/report_generator.py` — Executive Report
+- [ ] **9.G.2** Содержимое: Risk Score в сравнении с индустрией (gauge chart), топ-3 критических риска простым языком, тренд за 30 дней, финансовая оценка рисков (ориентировочный ущерб)
+- [ ] **9.G.3** Добавить `GET /api/v1/assets/{id}/executive-report.pdf` эндпоинт
+- [ ] **9.G.4** Кнопка «Executive Report» в UI рядом с технической кнопкой «Скачать PDF»
+
+---
+
+### 9.H Обновление Risk Score Engine (λ=0.003, обновлённые веса)
+
+**Зачем:** new_vision.md v2 уточнил параметры: λ=0.003 (не 0.005), новые веса штрафов.
+
+- [ ] **9.H.1** Обновить `T(t) = e^(-0.003 × t)` — снижение на 50% за 231 день (6 месяцев), было 140 дней
+- [ ] **9.H.2** Обновить матрицу весов по таблице из BRD:
+    - critical=25 (RCE, SQLi, живой session cookie)
+    - high=15 (утекший пароль от внутренней системы)
+    - high=12 (открытый порт БД / панель администрирования)
+    - medium=8 (отсутствие SPF/DMARC)
+    - low=3 (устаревшее ПО End-of-Life)
+- [ ] **9.H.3** Добавить `condition` к каждому событию — условие когда штраф снимается (пароль сменён, порт закрыт)
+- [ ] **9.H.4** Показывать в UI «До устранения» рядом с каждым штрафом
+
+---
+
+### 9.I OpenSearch Mapping — оптимизированный индекс для утечек
+
+**Зачем:** Текущий easm-events индекс не оптимизирован для 50k записей/сек и 5B записей.
+
+- [ ] **9.I.1** Создать отдельный индекс `easm-leaked-credentials` с настройками из BRD:
+    - `number_of_shards: 5`, `number_of_replicas: 1`
+    - `refresh_interval: "10s"` (вместо 1s по умолчанию)
+    - `codec: "best_compression"`
+- [ ] **9.I.2** Применить mapping: `login` как text+keyword, `password_enc` с `index: false`
+- [ ] **9.I.3** Переключить `stealer_parser.py` на запись в `easm-leaked-credentials` вместо `easm-events`
+- [ ] **9.I.4** ILM policy: горячая фаза 30 дней → тёплая (merge segments) → холодная (readonly) после 90 дней
+
+---
+
+### 9.J Shodan / Censys API — обогащение данных историческими сканами
+
+**Зачем:** Выявить хосты, временно закрытые файрволом во время скана, но открытые вчера.
+
+- [ ] **9.J.1** Добавить `SHODAN_API_KEY` и `CENSYS_API_ID`/`CENSYS_API_SECRET` в `.env`
+- [ ] **9.J.2** Создать `workers/tasks/shodan_enricher.py` — `GET api.shodan.io/shodan/host/{ip}` для каждого IP из Asset
+- [ ] **9.J.3** Сравнивать исторические порты Shodan с текущими нашими — расхождение → событие `asset_drift`
+- [ ] **9.J.4** Добавить `POST /api/v1/scan/enrich` эндпоинт
+- [ ] **9.J.5** Fallback: если нет API-ключей — пропускать этап без ошибки
+
+---
+
+### 9.K Senior Code Review v2 (после Фазы 9)
+
+- [ ] Run full senior code review.
+- [ ] Refactor weak parts.
+- [ ] Optimize architecture.
+- [ ] Add missing production features.
+
+---
+
 ## Как использовать эту инструкцию:
 
 1.  Инициализируйте пустой git-репозиторий в рабочей папке.

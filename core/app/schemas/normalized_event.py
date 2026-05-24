@@ -72,3 +72,9 @@ class NormalizedEvent(BaseModel):
         return self
 
     model_config = {"use_enum_values": True}
+
+
+class BulkIngestRequest(BaseModel):
+    """Схема для батчевой отправки событий — до 1000 штук за один запрос."""
+
+    events: list[NormalizedEvent] = Field(..., max_length=1000)

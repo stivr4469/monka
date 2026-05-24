@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     # Пример: ALLOWED_ORIGINS=http://localhost:3000,https://app.example.com
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # Режим разработки — включает беспарольный /auth/dev-login
+    # НИКОГДА не ставить True в production
+    DEV_MODE: bool = True
+
+
+# Лимиты доменов (активов) по тарифным планам.
+# enterprise = фактически безлимит; избегаем float("inf") для совместимости с JSON.
+PLAN_DOMAIN_LIMITS: dict[str, int] = {
+    "starter": 3,
+    "professional": 10,
+    "enterprise": 999_999,
+}
+
 
 @lru_cache
 def get_settings() -> Settings:

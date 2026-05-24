@@ -13,8 +13,8 @@
   3. Трёхпольный (url:login:password):
        https://example.com:user@example.com:secret123
 
-Пароли хранятся в БД как есть — это OSINT-инструмент, цель которого
-показать реальную степень компрометации.
+7.A: Стриминговый парсинг — принимает Path на диск вместо bytes в RAM.
+7.B: Батчевая отправка через bulk_ingest вместо N×HTTP.
 """
 import io
 import logging
@@ -24,9 +24,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
-
 from crypto import encrypt_password
+from tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +33,12 @@ logger = logging.getLogger(__name__)
 # Парсеры форматов
 # ──────────────────────────────────────────────
 
-def _parse_block_format(text: str) -> list[dict]:
+def _parse_block_format(lines: list[str]) -> list[dict]:
     """Парсит блочный формат URL/Login/Password."""
     records = []
     url = login = password = ""
 
-    for line in text.splitlines():
+    for line in lines:
         line = line.strip()
         low = line.lower()
 
@@ -50,27 +49,22 @@ def _parse_block_format(text: str) -> list[dict]:
         elif low.startswith("password:") or low.startswith("pass:"):
             password = re.split(r":", line, maxsplit=1)[1].strip()
 
-        # Сброс блока при пустой строке или разделителе
         if line in ("", "---", "===", "***") and url and login and password:
             records.append({"url": url, "login": login, "password": password})
             url = login = password = ""
 
-    # Последний блок без разделителя
     if url and login and password:
         records.append({"url": url, "login": login, "password": password})
 
     return records
 
 
-def _parse_combo_format(text: str) -> list[dict]:
+def _parse_combo_format(lines: list[str]) -> list[dict]:
     """Парсит combo-list: login:password или email:password."""
     records = []
-    for line in text.splitlines():
+    for line in lines:
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Пропускаем строки похожие на URL (http://...)
-        if line.lower().startswith("http"):
+        if not line or line.startswith("#") or line.lower().startswith("http"):
             continue
         parts = line.split(":", 1)
         if len(parts) == 2:
@@ -80,10 +74,10 @@ def _parse_combo_format(text: str) -> list[dict]:
     return records
 
 
-def _parse_three_field(text: str) -> list[dict]:
+def _parse_three_field(lines: list[str]) -> list[dict]:
     """Парсит формат url:login:password."""
     records = []
-    for line in text.splitlines():
+    for line in lines:
         line = line.strip()
         if not line:
             continue
@@ -91,7 +85,6 @@ def _parse_three_field(text: str) -> list[dict]:
         if len(parts) == 3:
             url, login, password = parts
             if login and password:
-                # Восстанавливаем https: если URL начинался с http
                 if url in ("http", "https"):
                     url = url + ":" + login
                     parts2 = password.split(":", 1)
@@ -101,23 +94,22 @@ def _parse_three_field(text: str) -> list[dict]:
     return records
 
 
-def _detect_and_parse(text: str) -> list[dict]:
+def _detect_and_parse(lines: list[str]) -> list[dict]:
     """Автоопределение формата и парсинг."""
-    # Блочный формат — есть строки начинающиеся с "URL:" / "Login:" / "Password:"
-    if re.search(r"^(url|login|username|password|pass):", text, re.IGNORECASE | re.MULTILINE):
-        records = _parse_block_format(text)
+    text_sample = "\n".join(lines[:200])
+
+    if re.search(r"^(url|login|username|password|pass):", text_sample, re.IGNORECASE | re.MULTILINE):
+        records = _parse_block_format(lines)
         if records:
             return records
 
-    # Трёхпольный — большинство строк содержат 2+ двоеточия и начинаются с http
-    http_colon_lines = [l for l in text.splitlines() if l.strip().lower().startswith("http")]
-    if len(http_colon_lines) > len(text.splitlines()) * 0.3:
-        records = _parse_three_field(text)
+    http_lines = sum(1 for l in lines if l.strip().lower().startswith("http"))
+    if http_lines > len(lines) * 0.3:
+        records = _parse_three_field(lines)
         if records:
             return records
 
-    # Combo-list — fallback
-    return _parse_combo_format(text)
+    return _parse_combo_format(lines)
 
 
 # ──────────────────────────────────────────────
@@ -130,7 +122,6 @@ def _extract_domain(url: str, login: str) -> str | None:
         try:
             parsed = urlparse(url if "://" in url else "https://" + url)
             host = parsed.hostname or ""
-            # Убираем www.
             return host.lstrip("www.") if host else None
         except Exception:
             pass
@@ -140,7 +131,7 @@ def _extract_domain(url: str, login: str) -> str | None:
 
 
 def _matches_target(record: dict, target_domain: str) -> bool:
-    """Проверяет принадлежит ли запись мониторимому домену (или его поддоменам)."""
+    """Проверяет принадлежность записи мониторимому домену (включая поддомены)."""
     domain = _extract_domain(record.get("url", ""), record.get("login", ""))
     if not domain:
         return False
@@ -148,84 +139,103 @@ def _matches_target(record: dict, target_domain: str) -> bool:
 
 
 # ──────────────────────────────────────────────
+# 7.A: Стриминговый итератор строк из ZIP без загрузки в RAM
+# ──────────────────────────────────────────────
+
+def _iter_text_files_from_zip(file_path: Path):
+    """
+    Генератор: (filename, lines) для каждого .txt/.log/.csv внутри ZIP.
+    Читает построчно через TextIOWrapper — не буферизует файл в RAM.
+    """
+    with zipfile.ZipFile(file_path) as zf:
+        for member in zf.namelist():
+            if not member.lower().endswith((".txt", ".log", ".csv")):
+                continue
+            try:
+                with zf.open(member) as raw_file:
+                    text_file = io.TextIOWrapper(raw_file, encoding="utf-8", errors="replace")
+                    lines = list(text_file)  # читаем построчно
+                yield member, lines
+            except Exception as exc:
+                logger.warning("[stealer] Не удалось прочитать %s: %s", member, exc)
+
+
+# ──────────────────────────────────────────────
 # Основная задача
 # ──────────────────────────────────────────────
 
 def parse_stealer_log(
-    file_bytes: bytes,
+    file_path: Path,
     filename: str,
     target_domains: list[str],
     core_api_url: str,
     internal_secret: str,
 ) -> dict:
     """
-    Парсит стилер-лог (ZIP или TXT), сопоставляет с доменами
-    и отправляет события в Core API.
+    Парсит стилер-лог (ZIP или TXT) по пути на диске.
+    Отправляет события в Core API через bulk_ingest.
+    Удаляет временный файл после обработки.
 
     Возвращает: {"parsed": N, "matched": M, "sent": K, "errors": E}
     """
-    ingest_url = f"{core_api_url}/api/v1/internal/ingest"
-    headers = {"Authorization": f"Bearer {internal_secret}"}
+    total_parsed = matched = 0
+    events_batch: list[dict] = []
 
-    texts: list[tuple[str, str]] = []  # (filename, text)
+    try:
+        # Определяем формат по имени файла и сигнатуре
+        is_zip = filename.lower().endswith(".zip") or (
+            file_path.stat().st_size >= 2 and file_path.read_bytes()[:2] == b"PK"
+        )
 
-    # Распаковываем ZIP или читаем TXT
-    if filename.lower().endswith(".zip") or file_bytes[:2] == b"PK":
+        if is_zip:
+            file_pairs = list(_iter_text_files_from_zip(file_path))
+        else:
+            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            file_pairs = [(filename, lines)]
+
+        for src_filename, lines in file_pairs:
+            records = _detect_and_parse(lines)
+            total_parsed += len(records)
+            logger.info("[stealer] %s: найдено %d записей", src_filename, len(records))
+
+            for rec in records:
+                for domain in target_domains:
+                    if not _matches_target(rec, domain):
+                        continue
+
+                    matched += 1
+                    raw_pwd = rec.get("password", "")
+                    enc_pwd = encrypt_password(raw_pwd, internal_secret)
+
+                    events_batch.append({
+                        "event_type": "stealer_log",
+                        "severity": "critical",
+                        "source_type": "stealer_log",
+                        "source_name": "stealer-parser",
+                        "target_domain": domain,
+                        "payload": {
+                            "url": rec.get("url", ""),
+                            "login": rec.get("login", ""),
+                            "password_enc": enc_pwd,
+                            "source_file": src_filename,
+                        },
+                    })
+
+        # 7.B: отправляем батчем
+        result = bulk_ingest(events_batch, core_api_url, internal_secret)
+        sent = result["sent"]
+        errors = result["errors"]
+
+    except Exception as exc:
+        logger.error("[stealer] Критическая ошибка парсинга: %s", exc)
+        sent = 0
+        errors = 1
+    finally:
+        # 7.A.4: удаляем временный файл после обработки
         try:
-            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-                for name in zf.namelist():
-                    if name.lower().endswith((".txt", ".log", ".csv")):
-                        try:
-                            raw = zf.read(name)
-                            texts.append((name, raw.decode("utf-8", errors="replace")))
-                        except Exception as exc:
-                            logger.warning("Не удалось прочитать %s: %s", name, exc)
-        except zipfile.BadZipFile as exc:
-            logger.error("Повреждённый ZIP: %s", exc)
-            return {"parsed": 0, "matched": 0, "sent": 0, "errors": 1}
-    else:
-        texts.append((filename, file_bytes.decode("utf-8", errors="replace")))
-
-    total_parsed = matched = sent = errors = 0
-
-    for src_filename, text in texts:
-        records = _detect_and_parse(text)
-        total_parsed += len(records)
-        logger.info("[stealer] %s: найдено %d записей", src_filename, len(records))
-
-        for rec in records:
-            for domain in target_domains:
-                if not _matches_target(rec, domain):
-                    continue
-
-                matched += 1
-                raw_pwd = rec.get("password", "")
-                enc_pwd = encrypt_password(raw_pwd, internal_secret)
-
-                event = {
-                    "event_type": "stealer_log",
-                    "severity": "critical",
-                    "source_type": "stealer_log",
-                    "source_name": "stealer-parser",
-                    "target_domain": domain,
-                    "payload": {
-                        "url": rec.get("url", ""),
-                        "login": rec.get("login", ""),
-                        "password_enc": enc_pwd,
-                        "source_file": src_filename,
-                    },
-                }
-
-                try:
-                    r = httpx.post(ingest_url, json=event, headers=headers, timeout=10)
-                    status = r.json().get("status", "error")
-                    if status in ("accepted", "duplicate"):
-                        sent += 1
-                    else:
-                        errors += 1
-                except Exception as exc:
-                    logger.error("ingest error: %s", exc)
-                    errors += 1
+            file_path.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning("[stealer] Не удалось удалить временный файл %s: %s", file_path, exc)
 
     logger.info(
         "[stealer] Итого: parsed=%d matched=%d sent=%d errors=%d",

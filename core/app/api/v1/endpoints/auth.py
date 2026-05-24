@@ -5,6 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, verify_password
 from app.db import get_db
@@ -15,9 +16,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/token", response_model=Token)
-@limiter.limit("10/minute")  # Защита от брутфорса: максимум 10 попыток в минуту с одного IP
+@limiter.limit("10/minute")
 async def login_for_access_token(
-    request: Request,  # slowapi требует request в сигнатуре для извлечения IP
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Token:
@@ -32,6 +33,25 @@ async def login_for_access_token(
         )
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пользователь неактивен")
+
+    token = create_access_token(user.id)
+    return Token(access_token=token)
+
+
+@router.get("/dev-login", response_model=Token)
+async def dev_login(db: Annotated[AsyncSession, Depends(get_db)]) -> Token:
+    """
+    Беспарольный вход для режима разработки.
+    Возвращает токен первого активного пользователя.
+    Доступен ТОЛЬКО при DEV_MODE=True.
+    """
+    if not settings.DEV_MODE:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    result = await db.execute(select(User).where(User.is_active == True).limit(1))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Нет активных пользователей")
 
     token = create_access_token(user.id)
     return Token(access_token=token)

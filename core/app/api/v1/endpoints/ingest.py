@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,7 +9,8 @@ from app.core.config import settings
 from app.models.asset import Asset
 from app.models.event import Event
 from app.models.organization import Organization
-from app.schemas.normalized_event import NormalizedEvent
+from app.schemas.normalized_event import BulkIngestRequest, NormalizedEvent
+from app.services.opensearch_client import index_event
 from app.services.webhook import notify_critical_event
 from app.workers_client import ensure_workers_path, get_executor
 
@@ -114,4 +116,101 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
             source_name=event.source_name,
         )
 
+    # 7.C.1: Дублируем событие в OpenSearch асинхронно (не блокирует ответ)
+    asyncio.ensure_future(
+        index_event(db_event.id, {
+            "event_type":    db_event.event_type,
+            "severity":      db_event.severity,
+            "source_type":   db_event.source_type,
+            "source_name":   db_event.source_name,
+            "target_domain": db_event.target_domain,
+            "detected_at":   db_event.detected_at.isoformat() if db_event.detected_at else None,
+            "dedup_hash":    db_event.dedup_hash,
+            "payload":       db_event.payload or {},
+        })
+    )
+
     return {"status": "accepted", "event_id": db_event.id}
+
+
+@router.post("/ingest/bulk", status_code=status.HTTP_202_ACCEPTED)
+async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
+    """
+    7.B.2: Батчевый приём событий — один запрос вместо N×HTTP.
+    Дедупликация: один SELECT IN (...) для всего батча.
+    Вставка: db.add_all() за одну транзакцию.
+    """
+    if not body.events:
+        return {"status": "accepted", "accepted": 0, "duplicates": 0, "errors": 0}
+
+    # Собираем все dedup_hash батча
+    hashes = [e.dedup_hash for e in body.events if e.dedup_hash]
+
+    # Один запрос для проверки дублей
+    existing_hashes: set[str] = set()
+    if hashes:
+        existing_result = await db.execute(
+            select(Event.dedup_hash).where(Event.dedup_hash.in_(hashes))
+        )
+        existing_hashes = {row[0] for row in existing_result.all()}
+
+    accepted = duplicates = errors = 0
+    new_events: list[Event] = []
+
+    for event in body.events:
+        if event.dedup_hash and event.dedup_hash in existing_hashes:
+            duplicates += 1
+            continue
+
+        asset_result = await db.execute(
+            select(Asset).where(Asset.domain == event.target_domain, Asset.is_active == True)  # noqa: E712
+        )
+        asset = asset_result.scalar_one_or_none()
+
+        db_event = Event(
+            event_type=event.event_type,
+            severity=event.severity,
+            source_type=event.source_type,
+            source_name=event.source_name,
+            target_domain=event.target_domain,
+            payload=event.payload,
+            detected_at=event.detected_at,
+            dedup_hash=event.dedup_hash,
+            asset_id=asset.id if asset else None,
+        )
+        new_events.append(db_event)
+
+    if new_events:
+        try:
+            db.add_all(new_events)
+            await db.commit()
+            for ev in new_events:
+                await db.refresh(ev)
+            accepted = len(new_events)
+        except Exception as exc:
+            await db.rollback()
+            logger.error("Ошибка bulk insert: %s", exc)
+            errors = len(new_events)
+
+    # 7.C.1: Асинхронная индексация в OpenSearch
+    for ev in new_events:
+        if ev.id:
+            asyncio.ensure_future(
+                index_event(ev.id, {
+                    "event_type":    ev.event_type,
+                    "severity":      ev.severity,
+                    "source_type":   ev.source_type,
+                    "source_name":   ev.source_name,
+                    "target_domain": ev.target_domain,
+                    "detected_at":   ev.detected_at.isoformat() if ev.detected_at else None,
+                    "dedup_hash":    ev.dedup_hash,
+                    "payload":       ev.payload or {},
+                })
+            )
+
+    return {
+        "status": "partial" if errors else "accepted",
+        "accepted": accepted,
+        "duplicates": duplicates,
+        "errors": errors,
+    }

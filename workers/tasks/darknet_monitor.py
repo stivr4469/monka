@@ -30,6 +30,8 @@ from typing import Any
 
 import httpx
 
+from tasks.bulk_ingest import bulk_ingest
+
 # Новые источники мониторинга — импорт опциональный (graceful degradation)
 try:
     from tasks.ransomware_sites import monitor_ransomware_sites as _monitor_ransomware_sites
@@ -361,39 +363,23 @@ def monitor_darknet(
     """
     Запускает все источники мониторинга даркнета последовательно.
 
-    Алгоритм:
-      1. RansomWatch — наиболее критичный; находки → severity "critical"
-      2. Ahmia.fi    — onion-поисковик; находки → severity "high"
-      3. DarkSearch  — darknet-поисковик; находки → severity "high"
-
-    Каждый источник изолирован try/except — сбой одного не прерывает остальные.
-
-    Возвращает:
-        {
-          "sources_checked": N,  — количество проверенных источников
-          "found": M,            — суммарное количество найденных упоминаний
-          "sent": K,             — успешно отправленных событий в Core API
-          "critical": C,         — из них критических (ransomwatch + ransomware_sites)
-          "tor_skipped": bool,   — True если Tor-источники были пропущены
-        }
+    7.B.4: события накапливаются в батч и отправляются одним bulk POST
+    вместо N×HTTP (по одному на событие).
     """
     domain = domain.strip().lower()
     logger.info("[darknet] Начало мониторинга domain=%s", domain)
 
-    ingest_url = f"{core_api_url}/api/v1/internal/ingest"
-    ingest_headers: dict[str, str] = {"Authorization": f"Bearer {internal_secret}"}
-
-    sources_checked = found = sent = critical = 0
+    sources_checked = found = critical = 0
     tor_skipped = False
+    events_batch: list[dict[str, Any]] = []
 
     # ── Источник 1: RansomWatch (критический) ─────────────────────────────────
     try:
         rw_results = check_ransomwatch(domain)
         sources_checked += 1
         found += len(rw_results)
-
         for hit in rw_results:
-            event: dict[str, Any] = {
+            events_batch.append({
                 "event_type": "darknet_mention",
                 "severity": "critical",
                 "source_type": "darknet",
@@ -402,16 +388,13 @@ def monitor_darknet(
                 "payload": {
                     "source": "ransomwatch",
                     "group": hit["group"],
-                    "onion_url": "",  # RansomWatch не даёт прямых onion-ссылок
+                    "onion_url": "",
                     "title": hit["title"],
                     "snippet": hit["snippet"],
                     "published": hit["published"],
                 },
-            }
-            if _send_event(ingest_url, ingest_headers, event):
-                sent += 1
-                critical += 1
-
+            })
+            critical += 1
     except Exception as exc:
         logger.error("[darknet][ransomwatch] Неожиданная ошибка: %s", exc)
 
@@ -420,9 +403,8 @@ def monitor_darknet(
         ahmia_results = search_ahmia(domain)
         sources_checked += 1
         found += len(ahmia_results)
-
         for hit in ahmia_results:
-            event = {
+            events_batch.append({
                 "event_type": "darknet_mention",
                 "severity": "high",
                 "source_type": "darknet",
@@ -435,10 +417,7 @@ def monitor_darknet(
                     "title": hit["title"],
                     "snippet": hit["snippet"],
                 },
-            }
-            if _send_event(ingest_url, ingest_headers, event):
-                sent += 1
-
+            })
     except Exception as exc:
         logger.error("[darknet][ahmia] Неожиданная ошибка: %s", exc)
 
@@ -447,9 +426,8 @@ def monitor_darknet(
         ds_results = search_darksearch(domain)
         sources_checked += 1
         found += len(ds_results)
-
         for hit in ds_results:
-            event = {
+            events_batch.append({
                 "event_type": "darknet_mention",
                 "severity": "high",
                 "source_type": "darknet",
@@ -462,10 +440,7 @@ def monitor_darknet(
                     "title": hit["title"],
                     "snippet": hit["snippet"],
                 },
-            }
-            if _send_event(ingest_url, ingest_headers, event):
-                sent += 1
-
+            })
     except Exception as exc:
         logger.error("[darknet][darksearch] Неожиданная ошибка: %s", exc)
 
@@ -478,22 +453,19 @@ def monitor_darknet(
                 internal_secret=internal_secret,
             )
             sources_checked += 1
-
             if rw_sites_result.get("tor_required"):
-                # Tor недоступен — graceful degradation, не считаем ошибкой
                 tor_skipped = True
                 logger.info("[darknet][ransomware_sites] Tor недоступен, источник пропущен")
             else:
+                # ransomware_sites сам отправляет через свой ingest — учитываем только счётчики
                 group_found = rw_sites_result.get("found", 0)
                 group_sent = rw_sites_result.get("sent", 0)
                 found += group_found
-                sent += group_sent
-                critical += group_sent  # ransomware_sites → severity critical
+                critical += group_sent
                 logger.info(
                     "[darknet][ransomware_sites] domain=%s found=%d sent=%d",
                     domain, group_found, group_sent,
                 )
-
         except Exception as exc:
             logger.error("[darknet][ransomware_sites] Неожиданная ошибка: %s", exc)
     else:
@@ -506,24 +478,23 @@ def monitor_darknet(
                 domain=domain,
                 core_api_url=core_api_url,
                 internal_secret=internal_secret,
-                # api_key=None — используем публичный phonebook-режим
-                # При наличии ключа в конфиге передавать сюда
             )
             sources_checked += 1
-
             ix_found = intelx_result.get("found", 0)
             ix_sent = intelx_result.get("sent", 0)
             found += ix_found
-            sent += ix_sent
             logger.info(
                 "[darknet][intelx] domain=%s found=%d sent=%d mode=%s",
                 domain, ix_found, ix_sent, intelx_result.get("mode", "?"),
             )
-
         except Exception as exc:
             logger.error("[darknet][intelx] Неожиданная ошибка: %s", exc)
     else:
         logger.debug("[darknet][intelx] Модуль недоступен (ImportError)")
+
+    # 7.B.4: Отправляем весь батч одним запросом
+    result = bulk_ingest(events_batch, core_api_url, internal_secret)
+    sent = result["sent"]
 
     logger.info(
         "[darknet] Итого domain=%s sources=%d found=%d sent=%d critical=%d tor_skipped=%s",

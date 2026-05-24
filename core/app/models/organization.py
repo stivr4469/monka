@@ -1,7 +1,17 @@
+import enum
+
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, new_uuid
+
+
+class OrgPlan(str, enum.Enum):
+    """Тарифный план организации."""
+
+    starter = "starter"
+    professional = "professional"
+    enterprise = "enterprise"
 
 
 class Organization(Base, TimestampMixin):
@@ -15,6 +25,10 @@ class Organization(Base, TimestampMixin):
     # Если задан — POST запрос отправляется при severity="critical".
     # Должен быть валидным HTTPS URL, принимающим POST с JSON-payload.
     webhook_url: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
+
+    # Тарифный план: влияет на лимит доменов (assets).
+    # starter=3, professional=10, enterprise=999999 (фактически безлимит).
+    plan: Mapped[str] = mapped_column(String(32), default=OrgPlan.starter.value, nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="organization")  # type: ignore[name-defined]  # noqa: F821
     assets: Mapped[list["Asset"]] = relationship(back_populates="organization")  # type: ignore[name-defined]  # noqa: F821

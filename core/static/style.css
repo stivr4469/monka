@@ -201,6 +201,23 @@ body {
   gap: .75rem;
 }
 
+/* Виджет тарифного плана (задача 8.I) */
+.plan-info {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .3rem .625rem;
+  background: rgba(var(--accent-rgb, 99,102,241), .08);
+  border: 1px solid rgba(var(--accent-rgb, 99,102,241), .18);
+  border-radius: var(--radius-md);
+  color: var(--text-2);
+  font-size: .8rem;
+  white-space: nowrap;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+  cursor: default;
+  user-select: none;
+}
+
 /* Кнопка переключения темы */
 .theme-toggle {
   display: flex;

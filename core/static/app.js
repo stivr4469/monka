@@ -118,11 +118,14 @@ class API {
     if (filters.domain)     params.set('domain', filters.domain);
     if (filters.severity)   params.set('severity', filters.severity);
     if (filters.event_type) params.set('event_type', filters.event_type);
-    if (filters.limit)      params.set('limit', filters.limit);
+    if (filters.limit)      params.set('limit', String(filters.limit || 100));
+    if (filters.before)     params.set('before', filters.before);
     const qs = params.toString() ? `?${params}` : '';
     const res = await this.request(`/api/v1/events/${qs}`);
     if (!res || !res.ok) throw new Error(`Ошибка events: ${res?.status}`);
-    return res.json();
+    const data = await res.json();
+    // API возвращает {items: [...], next_before: "..."} — нормализуем в массив
+    return Array.isArray(data) ? data : (data.items || []);
   }
 
   /** GET /api/v1/assets/ */
@@ -164,6 +167,46 @@ class API {
       throw new Error(err.detail || `HTTP ${res?.status}`);
     }
     return res.json();
+  }
+
+  /**
+   * Скачивает PDF-отчёт через временный <a>-элемент.
+   * @param {string} assetId
+   * @param {'technical'|'executive'} type
+   * @param {string} domain — для имени файла
+   */
+  static async downloadReport(assetId, type = 'technical', domain = 'report') {
+    const endpoint = type === 'executive'
+      ? `/api/v1/assets/${assetId}/executive-report.pdf`
+      : `/api/v1/assets/${assetId}/report.pdf`;
+
+    const token = this.getToken();
+    const res = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.status === 401) {
+      this.clearToken();
+      window.location.href = '/login.html';
+      return;
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const safeDomain = domain.replace(/[^a-zA-Z0-9._-]/g, '_');
+    a.href     = url;
+    a.download = type === 'executive'
+      ? `${safeDomain}_executive_report.pdf`
+      : `${safeDomain}_security_report.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   /**
@@ -248,6 +291,32 @@ class API {
     return res.json();
   }
 
+  /** POST /api/v1/scan/hardening */
+  static async scanHardening(domain) {
+    const res = await this.request('/api/v1/scan/hardening', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
+  /** POST /api/v1/scan/phishing */
+  static async scanPhishing(domain) {
+    const res = await this.request('/api/v1/scan/phishing', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
   /** POST /api/v1/scan/darknet */
   static async scanDarknet(domain) {
     const res = await this.request('/api/v1/scan/darknet', {
@@ -259,6 +328,47 @@ class API {
       throw new Error(err.detail || `HTTP ${res?.status}`);
     }
     return res.json();
+  }
+
+  /** POST /api/v1/scan/ports */
+  static async scanPorts(domain) {
+    const res = await this.request('/api/v1/scan/ports', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
+  /** POST /api/v1/scan/s3 */
+  static async scanS3(domain) {
+    const res = await this.request('/api/v1/scan/s3', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * GET /api/v1/billing/plan
+   * Возвращает информацию о тарифном плане или null при ошибке (не бросает).
+   * @returns {Promise<{plan:string,plan_label:string,domain_limit:number,domains_used:number,domains_remaining:number}|null>}
+   */
+  static async getBillingPlan() {
+    try {
+      const res = await this.request('/api/v1/billing/plan');
+      if (!res || !res.ok) return null;
+      return res.json();
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -750,6 +860,25 @@ function assetCardHtml(a) {
           </svg>
           Delete
         </button>
+        <button class="btn btn-secondary btn-sm"
+                onclick="handleDownloadReport('${escHtml(a.id)}', '${escHtml(a.domain)}', 'technical', this)"
+                title="Скачать технический PDF-отчёт по безопасности">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <rect x="2" y="1" width="8" height="10" rx="1.2" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M4 4h4M4 6h3M4 8h2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+          </svg>
+          PDF Report
+        </button>
+        <button class="btn btn-secondary btn-sm"
+                onclick="handleDownloadReport('${escHtml(a.id)}', '${escHtml(a.domain)}', 'executive', this)"
+                title="Скачать executive PDF-отчёт для руководства">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2 2h8v1.5l-4 3-4-3V2z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+            <path d="M2 3.5v6.5h8V3.5" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+            <path d="M4 7h4M4 8.5h2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+          </svg>
+          Exec Report
+        </button>
       </div>
     </div>`;
 }
@@ -776,6 +905,26 @@ async function handleDeleteAsset(id, domain, btn) {
     renderAssets();
   } catch (e) {
     Toast.show('error', 'Ошибка удаления', e.message);
+    setLoading(btn, false);
+  }
+}
+
+/**
+ * Скачивает PDF-отчёт для актива.
+ * @param {string} id       — asset_id
+ * @param {string} domain   — домен для имени файла
+ * @param {'technical'|'executive'} type
+ * @param {HTMLButtonElement} btn
+ */
+async function handleDownloadReport(id, domain, type, btn) {
+  setLoading(btn, true);
+  try {
+    await API.downloadReport(id, type, domain);
+    const label = type === 'executive' ? 'Executive Report' : 'Security Report';
+    Toast.show('success', `${label} скачан`, domain);
+  } catch (e) {
+    Toast.show('error', 'Ошибка генерации отчёта', e.message);
+  } finally {
     setLoading(btn, false);
   }
 }
@@ -1280,6 +1429,94 @@ function renderDarknet() {
   }
 }
 
+async function handleHardeningScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для проверки периметра');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+  const btn = document.getElementById('hardening-scan-btn');
+  setLoading(btn, true);
+  try {
+    await API.scanHardening(domain);
+    Toast.show('success', 'Проверка периметра запущена', `SPF / DMARC / AXFR / SSL для ${domain}`);
+    addScanLog('ok', domain, 'hardening: запущен');
+  } catch (e) {
+    Toast.show('error', 'Ошибка проверки периметра', e.message);
+    addScanLog('error', domain, `hardening: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function handlePhishingScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для проверки фишинга');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+  const btn = document.getElementById('phishing-scan-btn');
+  setLoading(btn, true);
+  try {
+    await API.scanPhishing(domain);
+    Toast.show('success', 'Проверка фишинга запущена', `Тайпосквот-анализ для ${domain}`);
+    addScanLog('ok', domain, 'phishing: запущен');
+  } catch (e) {
+    Toast.show('error', 'Ошибка проверки фишинга', e.message);
+    addScanLog('error', domain, `phishing: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function handlePortScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для сканирования портов');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+  const btn = document.getElementById('port-scan-btn');
+  setLoading(btn, true);
+  try {
+    await API.scanPorts(domain);
+    Toast.show('success', 'Сканирование портов запущено', `nmap по публичным IP для ${domain}`);
+    addScanLog('ok', domain, 'port scan: запущен');
+  } catch (e) {
+    Toast.show('error', 'Ошибка сканирования портов', e.message);
+    addScanLog('error', domain, `port scan: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function handleS3Scan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для поиска S3 бакетов');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+  const btn = document.getElementById('s3-scan-btn');
+  setLoading(btn, true);
+  try {
+    await API.scanS3(domain);
+    Toast.show('success', 'Поиск S3 бакетов запущен', `Проверка бакетов по имени компании для ${domain}`);
+    addScanLog('ok', domain, 's3 scan: запущен');
+  } catch (e) {
+    Toast.show('error', 'Ошибка поиска S3 бакетов', e.message);
+    addScanLog('error', domain, `s3 scan: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 async function handleDarknetScan() {
   const domainInput = document.getElementById('darknet-domain');
   const domain = domainInput?.value.trim() || '';
@@ -1649,6 +1886,41 @@ async function handleStealerSources() {
 }
 
 // ─────────────────────────────────────────────
+// SaaS биллинг — виджет плана в хедере (задача 8.I)
+// ─────────────────────────────────────────────
+
+/**
+ * Загружает данные тарифного плана с /api/v1/billing/plan
+ * и обновляет виджет в хедере.
+ * Тихо игнорирует ошибки — виджет просто не показывается.
+ */
+async function loadPlanInfo() {
+  const badge   = document.getElementById('plan-badge');
+  const nameEl  = document.getElementById('plan-name');
+  const countEl = document.getElementById('domain-counter');
+
+  if (!badge || !nameEl || !countEl) return;
+
+  const data = await API.getBillingPlan();
+  if (!data) return; // нет организации или пользователь без организации
+
+  nameEl.textContent  = data.plan_label || data.plan.toUpperCase();
+  countEl.textContent = `${data.domains_used}/${data.domain_limit} доменов`;
+
+  // Подсветка при приближении к лимиту
+  const pct = data.domain_limit > 0 ? data.domains_used / data.domain_limit : 0;
+  badge.style.color = pct >= 1
+    ? 'var(--sev-critical)'
+    : pct >= 0.8
+      ? 'var(--sev-high)'
+      : '';
+
+  badge.style.display = 'flex';
+  badge.style.alignItems = 'center';
+  badge.style.gap = '.35rem';
+}
+
+// ─────────────────────────────────────────────
 // Инициализация приложения
 // ─────────────────────────────────────────────
 
@@ -1657,6 +1929,9 @@ function init() {
   Theme.init();
 
   if (!checkAuth()) return;
+
+  // Загружаем информацию о тарифном плане (задача 8.I)
+  loadPlanInfo();
 
   // Навигация
   document.querySelectorAll('.nav-tab').forEach(tab => {

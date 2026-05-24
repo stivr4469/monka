@@ -1,14 +1,22 @@
+import math
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, DBDep
+from app.core.config import PLAN_DOMAIN_LIMITS
 from app.models.asset import Asset
 from app.models.event import Event
+from app.models.organization import Organization
 from app.scanner import run_subfinder
 from app.schemas.asset import AssetCreate, AssetRead, AssetUpdate
+from app.services.report_generator import (
+    generate_executive_report,
+    generate_technical_report,
+)
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -33,6 +41,30 @@ async def create_asset(
 ) -> Asset:
     if current_user.organization_id is None:
         raise HTTPException(status_code=400, detail="Пользователь не привязан к организации")
+
+    # Проверка лимита доменов по тарифному плану (задача 8.I)
+    org = await db.get(Organization, current_user.organization_id)
+    if org is None:
+        raise HTTPException(status_code=400, detail="Организация не найдена")
+
+    plan: str = getattr(org, "plan", "starter") or "starter"
+    limit: int = PLAN_DOMAIN_LIMITS.get(plan, PLAN_DOMAIN_LIMITS["starter"])
+
+    count_result = await db.execute(
+        select(func.count(Asset.id)).where(
+            Asset.organization_id == current_user.organization_id
+        )
+    )
+    current_count: int = count_result.scalar_one()
+
+    if current_count >= limit:
+        raise HTTPException(
+            status_code=402,  # Payment Required
+            detail=(
+                f"Лимит доменов для плана '{plan}': {limit}. "
+                "Обновите тарифный план для добавления новых доменов."
+            ),
+        )
 
     asset = Asset(
         domain=body.domain,
@@ -94,35 +126,43 @@ async def delete_asset(asset_id: str, db: DBDep, current_user: CurrentUser) -> N
 
 # ─── Схема Risk Score ─────────────────────────────────────────────────────────
 
-class RiskBreakdown(BaseModel):
-    """Детализация вклада каждого уровня severity в итоговый score."""
-    critical_events: int
-    high_events: int
-    medium_events: int
-    critical_score: int
-    high_score: int
-    medium_score: int
+class RiskEventItem(BaseModel):
+    """Детализация одного события, учтённого в формуле риска."""
+    event_id: str
+    severity: str
+    detected_at: datetime
+    delta_days: float        # дней с момента обнаружения
+    weight: float            # W(severity)
+    decay: float             # T(delta_days) = exp(-0.003 * delta_days)
+    contribution: float      # W × T × A
 
 
 class RiskScoreResponse(BaseModel):
-    """Ответ эндпоинта risk-score."""
+    """Ответ эндпоинта risk-score (формула затухания 8.B)."""
     asset_id: str
     domain: str
-    score: int               # 0–100
+    score: int               # 0–100, S = max(0, 100 - Σ вкладов)
     level: str               # critical | high | medium | low
-    breakdown: RiskBreakdown
-    window_days: int         # за сколько дней считался score (всегда 30)
+    importance: float        # A(importance) актива
+    total_penalty: float     # Σ W(sev) × T(t) × A — сумма штрафов до зажима
+    event_count: int         # количество событий, попавших в формулу
 
 
-# Константы начисления очков риска
-_CRITICAL_POINTS: int = 25   # max 4 события × 25 = 100
-_CRITICAL_MAX: int = 4
-_HIGH_POINTS: int = 10        # max 3 события × 10 = 30
-_HIGH_MAX: int = 3
-_MEDIUM_POINTS: int = 5       # max 2 события × 5 = 10
-_MEDIUM_MAX: int = 2
+# Веса severity (BRD new_vision.md, λ=0.003)
+# critical=25: RCE, SQLi, живой session cookie
+# high=15: утекший пароль от внутренней системы (stealer/breach)
+# high_infra=12: открытый порт БД / панель администрирования → mapped to "high"
+# Используем 13.5 как среднее для "high" (компромисс между credential и infra)
+_SEVERITY_WEIGHTS: dict[str, float] = {
+    "critical": 25.0,
+    "high":     13.5,  # среднее: credential=15, infra=12
+    "medium":    8.0,
+    "low":       3.0,
+    "info":      0.0,
+}
 
-_WINDOW_DAYS: int = 30
+# λ=0.003 → 50% затухания за 231 день (≈6 месяцев). Было 0.005 (140 дней).
+_DECAY_RATE: float = 0.003
 
 
 def _severity_to_level(score: int) -> str:
@@ -139,7 +179,7 @@ def _severity_to_level(score: int) -> str:
 @router.get(
     "/{asset_id}/risk-score",
     response_model=RiskScoreResponse,
-    summary="Risk Score актива за 30 дней",
+    summary="Risk Score актива (формула затухания 8.B)",
 )
 async def get_risk_score(
     asset_id: str,
@@ -147,19 +187,21 @@ async def get_risk_score(
     current_user: CurrentUser,
 ) -> RiskScoreResponse:
     """
-    Вычисляет Risk Score актива на основе событий за последние 30 дней.
+    Вычисляет Risk Score актива по формуле с временным затуханием (задача 8.B).
 
     Формула:
-      critical: +25 очков за событие, максимум 4 (≤ 100 от critical)
-      high:     +10 очков за событие, максимум 3 (≤ 30 от high)
-      medium:   +5  очков за событие, максимум 2 (≤ 10 от medium)
-    Итоговый score зажат в [0, 100].
+        S = max(0, 100 - Σ W(sev_i) × T(t_i) × A(importance))
 
-    Уровни:
-      75–100 → critical
-      40–74  → high
-      15–39  → medium
-      0–14   → low
+    Где:
+        W(critical)=25, W(high)=13.5, W(medium)=8, W(low)=3, W(info)=0
+        T(t) = exp(-0.003 * delta_days)  — 50% затухания за 231 день (6 месяцев)
+        A    = asset.importance (0.1–2.0, по умолчанию 1.0)
+
+    Уровни итогового score:
+        75–100 → critical
+        40–74  → high
+        15–39  → medium
+        0–14   → low
     """
     # Проверяем принадлежность актива организации пользователя
     asset_result = await db.execute(select(Asset).where(Asset.id == asset_id))
@@ -168,44 +210,238 @@ async def get_risk_score(
     if asset is None or asset.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Актив не найден")
 
-    # Окно: последние 30 дней
-    since = datetime.now(timezone.utc) - timedelta(days=_WINDOW_DAYS)
+    # Коэффициент важности — graceful fallback на 1.0 если поле отсутствует
+    importance: float = getattr(asset, "importance", None) or 1.0
 
-    # Считаем события по каждому уровню severity одним запросом
-    counts_result = await db.execute(
-        select(Event.severity, func.count().label("cnt"))
+    # Загружаем все события актива (без ограничения по окну — затухание само гасит старые)
+    events_result = await db.execute(
+        select(Event.id, Event.severity, Event.detected_at)
         .where(
             Event.asset_id == asset_id,
-            Event.detected_at >= since,
-            Event.severity.in_(["critical", "high", "medium"]),
+            Event.severity.in_(list(_SEVERITY_WEIGHTS.keys())),
         )
-        .group_by(Event.severity)
     )
-    counts: dict[str, int] = {row.severity: row.cnt for row in counts_result.all()}
+    events = events_result.all()
 
-    critical_cnt = counts.get("critical", 0)
-    high_cnt = counts.get("high", 0)
-    medium_cnt = counts.get("medium", 0)
+    now = datetime.now(timezone.utc)
+    total_penalty: float = 0.0
 
-    # Начисляем очки с учётом максимумов на каждый уровень
-    critical_score = min(critical_cnt, _CRITICAL_MAX) * _CRITICAL_POINTS
-    high_score = min(high_cnt, _HIGH_MAX) * _HIGH_POINTS
-    medium_score = min(medium_cnt, _MEDIUM_MAX) * _MEDIUM_POINTS
+    for ev in events:
+        weight = _SEVERITY_WEIGHTS.get(ev.severity, 0.0)
+        if weight == 0.0:
+            # Уровень info не вносит вклада — пропускаем
+            continue
 
-    total_score = min(critical_score + high_score + medium_score, 100)
+        # Убеждаемся, что detected_at timezone-aware для корректного вычитания
+        detected = ev.detected_at
+        if detected.tzinfo is None:
+            detected = detected.replace(tzinfo=timezone.utc)
+
+        delta_days: float = max(0.0, (now - detected).total_seconds() / 86400.0)
+
+        # Экспоненциальное затухание: свежее событие даёт полный вес
+        decay: float = math.exp(-_DECAY_RATE * delta_days)
+
+        total_penalty += weight * decay * importance
+
+    # Итоговый score: 100 минус сумма штрафов, зажатый в [0, 100]
+    raw_score: float = 100.0 - total_penalty
+    total_score: int = max(0, min(100, round(raw_score)))
 
     return RiskScoreResponse(
         asset_id=asset_id,
         domain=asset.domain,
         score=total_score,
         level=_severity_to_level(total_score),
-        breakdown=RiskBreakdown(
-            critical_events=critical_cnt,
-            high_events=high_cnt,
-            medium_events=medium_cnt,
-            critical_score=critical_score,
-            high_score=high_score,
-            medium_score=medium_score,
-        ),
-        window_days=_WINDOW_DAYS,
+        importance=importance,
+        total_penalty=round(total_penalty, 4),
+        event_count=len(events),
+    )
+
+
+# ─── Эндпоинты PDF-отчётов (задача 8.E) ──────────────────────────────────────
+
+async def _load_asset_and_events(
+    asset_id: str,
+    db: "DBDep",  # type: ignore[name-defined]
+    current_user: "CurrentUser",  # type: ignore[name-defined]
+) -> tuple[Asset, list[dict]]:
+    """
+    Общая вспомогательная функция для обоих PDF-эндпоинтов.
+
+    Проверяет принадлежность актива организации пользователя,
+    загружает связанные события и возвращает (asset, events_as_dicts).
+    """
+    asset_result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = asset_result.scalar_one_or_none()
+
+    if asset is None or asset.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Актив не найден")
+
+    events_result = await db.execute(
+        select(
+            Event.id,
+            Event.severity,
+            Event.event_type,
+            Event.source_name,
+            Event.source_type,
+            Event.detected_at,
+        )
+        .where(Event.asset_id == asset_id)
+        .order_by(Event.detected_at.desc())
+        .limit(500)  # защита от слишком большой выгрузки
+    )
+    events_rows = events_result.all()
+
+    events_as_dicts = [
+        {
+            "id":           row.id,
+            "severity":     row.severity,
+            "event_type":   row.event_type,
+            "source_name":  row.source_name,
+            "source_type":  row.source_type,
+            "detected_at":  row.detected_at,
+        }
+        for row in events_rows
+    ]
+
+    return asset, events_as_dicts
+
+
+async def _compute_risk_score_for_asset(
+    asset: Asset,
+    events_dicts: list[dict],
+) -> int:
+    """Повторяет формулу risk-score без обращения к БД (используем уже загруженные события)."""
+    importance: float = getattr(asset, "importance", None) or 1.0
+    now = datetime.now(timezone.utc)
+    total_penalty: float = 0.0
+
+    for ev in events_dicts:
+        weight = _SEVERITY_WEIGHTS.get(str(ev.get("severity", "info")).lower(), 0.0)
+        if weight == 0.0:
+            continue
+        detected = ev.get("detected_at")
+        if detected is None:
+            continue
+        if isinstance(detected, str):
+            try:
+                detected = datetime.fromisoformat(detected.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        if detected.tzinfo is None:
+            detected = detected.replace(tzinfo=timezone.utc)
+
+        delta_days = max(0.0, (now - detected).total_seconds() / 86400.0)
+        decay = math.exp(-_DECAY_RATE * delta_days)
+        total_penalty += weight * decay * importance
+
+    return max(0, min(100, round(100.0 - total_penalty)))
+
+
+@router.get(
+    "/{asset_id}/report.pdf",
+    summary="Технический PDF-отчёт по безопасности (задача 8.E)",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {"application/pdf": {}},
+            "description": "PDF-отчёт для инженеров ИБ",
+        },
+        404: {"description": "Актив не найден"},
+    },
+)
+async def download_technical_report(
+    asset_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> Response:
+    """
+    Генерирует технический PDF-отчёт по безопасности для актива.
+
+    Отчёт содержит:
+    - Risk Score с цветовой индикацией уровня.
+    - Таблицу топ-10 событий: severity / event_type / detected_at / source.
+    - Разбивку по категориям severity.
+
+    Доступен только пользователям организации-владельца актива.
+    """
+    asset, events = await _load_asset_and_events(asset_id, db, current_user)
+    risk_score = await _compute_risk_score_for_asset(asset, events)
+
+    # Получаем название организации для отчёта
+    org_result = await db.execute(
+        select(Organization).where(Organization.id == asset.organization_id)
+    )
+    org = org_result.scalar_one_or_none()
+    org_name = org.name if org else "Unknown"
+
+    pdf_bytes = generate_technical_report(
+        org_name=org_name,
+        domain=asset.domain,
+        risk_score=risk_score,
+        events=events,
+    )
+
+    safe_domain = asset.domain.replace("/", "_").replace("\\", "_")
+    filename = f"{safe_domain}_security_report.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{asset_id}/executive-report.pdf",
+    summary="Executive PDF-отчёт по безопасности (задача 8.E)",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {"application/pdf": {}},
+            "description": "Executive PDF-отчёт для руководства",
+        },
+        404: {"description": "Актив не найден"},
+    },
+)
+async def download_executive_report(
+    asset_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> Response:
+    """
+    Генерирует Executive PDF-отчёт по безопасности для актива.
+
+    Отчёт содержит:
+    - Краткое резюме состояния безопасности без технического жаргона.
+    - Risk Score с интерпретацией для руководства.
+    - Топ-3 ключевых риска, описанных понятным языком.
+    - Рекомендации для принятия управленческих решений.
+
+    Доступен только пользователям организации-владельца актива.
+    """
+    asset, events = await _load_asset_and_events(asset_id, db, current_user)
+    risk_score = await _compute_risk_score_for_asset(asset, events)
+
+    org_result = await db.execute(
+        select(Organization).where(Organization.id == asset.organization_id)
+    )
+    org = org_result.scalar_one_or_none()
+    org_name = org.name if org else "Unknown"
+
+    pdf_bytes = generate_executive_report(
+        org_name=org_name,
+        domain=asset.domain,
+        risk_score=risk_score,
+        events=events,
+    )
+
+    safe_domain = asset.domain.replace("/", "_").replace("\\", "_")
+    filename = f"{safe_domain}_executive_report.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -1,7 +1,13 @@
 """
 Эндпоинт загрузки стилер-логов.
 Принимает ZIP-архив или TXT-файл, запускает парсер в фоне.
+
+7.A: Файл сохраняется на диск (/tmp/stealer_<uuid>.zip) — не в RAM.
+     Парсер читает построчно и сам удаляет временный файл после обработки.
 """
+import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -33,6 +39,7 @@ class StealerUploadResponse(BaseModel):
 
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 МБ
+_TMP_DIR = Path("/tmp")
 
 
 @router.post("/upload", response_model=StealerUploadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -49,6 +56,7 @@ async def upload_stealer_log(
 ) -> StealerUploadResponse:
     """
     Загружает стилер-лог (ZIP или TXT).
+    Файл сохраняется на диск — не загружается в RAM целиком (OOM protection).
     Парсинг запускается в фоне — ответ приходит мгновенно.
     Результаты появятся в /api/v1/events/?event_type=stealer_log
     """
@@ -72,19 +80,35 @@ async def upload_stealer_log(
     if not target_domains:
         raise HTTPException(status_code=400, detail="Нет доменов для сопоставления")
 
-    # Читаем файл
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="Файл превышает 100 МБ")
-
     filename = file.filename or "upload.txt"
+    ext = Path(filename).suffix.lower() or ".bin"
+    tmp_path = _TMP_DIR / f"stealer_{uuid.uuid4().hex}{ext}"
 
-    # Запускаем парсинг в фоне
+    # 7.A.1: Сохраняем файл на диск чанками — не в RAM
+    size_bytes = 0
+    try:
+        with tmp_path.open("wb") as f_out:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB чанки
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if size_bytes > MAX_FILE_SIZE:
+                    tmp_path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="Файл превышает 100 МБ")
+                f_out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка сохранения файла: {exc}") from exc
+
+    # Запускаем парсинг в фоне (парсер сам удалит tmp_path после обработки)
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     get_executor().submit(
         parse_stealer_log,
-        file_bytes,
+        tmp_path,       # Path на диске вместо bytes
         filename,
         target_domains,
         core_api_url,
@@ -94,7 +118,7 @@ async def upload_stealer_log(
     return StealerUploadResponse(
         status="processing",
         filename=filename,
-        size_bytes=len(file_bytes),
+        size_bytes=size_bytes,
         target_domains=target_domains,
         detail="Парсинг запущен в фоне. Результаты появятся в /api/v1/events/?event_type=stealer_log",
     )

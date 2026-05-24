@@ -20,6 +20,21 @@
     <span class="version">v0.1</span>
   </a>
   <div class="header-right">
+    <!-- Тарифный план и лимит доменов (задача 8.I) -->
+    <div id="plan-badge" class="plan-info" style="display:none"
+         title="Тарифный план и использование доменов">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+           style="opacity:.65;flex-shrink:0" aria-hidden="true">
+        <path d="M6 1L2 3v3.5c0 2.4 1.7 4.65 4 5.2 2.3-.55 4-2.8 4-5.2V3L6 1z"
+              stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+      </svg>
+      <span id="plan-name" style="font-weight:600;font-size:.8rem">Starter</span>
+      <span id="domain-counter"
+            style="opacity:.65;font-size:.75rem;font-variant-numeric:tabular-nums">
+        0/3 доменов
+      </span>
+    </div>
+
     <div class="refresh-indicator" id="refresh-indicator" style="display:none">
       <span class="refresh-dot"></span>
       <span>Обновление через <span id="refresh-count">30</span>с</span>
@@ -604,16 +619,47 @@
         <input type="text" id="darknet-domain"
                placeholder="example.com" autocomplete="off">
       </div>
-      <button class="btn btn-primary" id="darknet-scan-btn"
-              onclick="handleDarknetScan()"
-              style="width:100%;justify-content:center">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/>
-          <path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        Запустить мониторинг
-      </button>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <button class="btn btn-primary" id="darknet-scan-btn"
+                onclick="handleDarknetScan()"
+                style="flex:1;min-width:160px;justify-content:center">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Запустить мониторинг
+        </button>
+        <button class="btn btn-secondary" id="hardening-scan-btn"
+                onclick="handleHardeningScan()"
+                style="flex:1;min-width:160px;justify-content:center"
+                title="Проверить SPF, DMARC, AXFR (zone transfer), SSL-сертификат">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 1.5L2 4v4c0 2.5 2.2 4.5 5 5 2.8-.5 5-2.5 5-5V4L7 1.5z"
+                  stroke="currentColor" stroke-width="1.3"
+                  stroke-linejoin="round"/>
+          </svg>
+          Проверить периметр
+        </button>
+        <button class="btn btn-secondary" id="phishing-scan-btn"
+                onclick="handlePhishingScan()"
+                style="flex:1;min-width:160px;justify-content:center"
+                title="Найти тайпосквот-варианты домена: vowel_swap, char_omission, tld_swap и др.">
+          🎣 Проверить фишинг
+        </button>
+        <button class="btn btn-secondary" id="port-scan-btn"
+                onclick="handlePortScan()"
+                style="flex:1;min-width:160px;justify-content:center"
+                title="Сканировать открытые порты: FTP, SSH, DB, RDP, Redis, Elasticsearch и др.">
+          🔍 Сканировать порты
+        </button>
+        <button class="btn btn-secondary" id="s3-scan-btn"
+                onclick="handleS3Scan()"
+                style="flex:1;min-width:160px;justify-content:center"
+                title="Обнаружить открытые S3-бакеты по имени компании из домена">
+          🪣 Найти S3 бакеты
+        </button>
+      </div>
       <div id="darknet-scan-status" style="margin-top:.75rem;display:none"></div>
     </div>
 

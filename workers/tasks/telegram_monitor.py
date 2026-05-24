@@ -55,12 +55,37 @@ _USER_AGENT = (
 
 # Список каналов для мониторинга по умолчанию
 DEFAULT_LEAK_CHANNELS: list[str] = [
+    # Базовые каналы — дампы и утечки БД
     "breachforums_com",   # дампы баз данных
     "leakbase_io",        # утечки
     "databreaches_cc",    # уведомления об утечках
     "darkwebinformer",    # новости даркнета
     "cybersecalerts",     # алерты безопасности
     "leakednation",       # утечки
+    # Стилер-логи и утечки учётных данных
+    "logsmafia",          # Logs Mafia — дистрибуция стилер-логов
+    "lummac2logs",        # LummaC2 логи
+    "stealerlogs",        # общие стилер-логи
+    "combolists",         # combo-листы учётных данных
+    "dumpz_to",           # дампы баз данных
+    "dataleakage",        # утечки данных
+    # Ransomware и APT
+    "ransomwarenews",     # новости ransomware
+    "soc_radar_news",     # SOCRadar новости угроз
+    "breachdetector",     # детектор утечек
+    # Threat Intelligence
+    "threatintelctr",     # CTI фид
+    "vxunderground",      # вредоносные образцы и анализ
+    "malwaretech",        # анализ малвари
+    "hackingnews_org",    # хакинг новости
+    "cyberthreatintel",   # Cyber Threat Intel
+    # Российский сегмент
+    "black_market_rus",   # чёрный рынок RU
+    "xakep_ru",           # Xakep.ru канал
+    "ru_cybersecurity",   # ИБ на русском
+    # Дополнительные источники
+    "leakcheck_net",      # LeakCheck — агрегатор утечек
+    "haveibeenpwned",     # HaveIBeenPwned новости
 ]
 
 # ──────────────────────────────────────────────

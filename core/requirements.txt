@@ -12,5 +12,11 @@ bcrypt==4.0.1
 python-multipart==0.0.9
 httpx==0.27.0
 opensearch-py==2.6.0
-# Rate limiting — slowapi совместима с FastAPI 0.111, использует Redis или in-memory
+# Rate limiting
 slowapi==0.1.9
+# Structured logging
+structlog==25.5.0
+# Error tracking
+sentry-sdk==2.60.0
+# PDF generation (задача 8.E)
+reportlab==4.2.2

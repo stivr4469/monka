@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.crypto import decrypt_password
 from app.models.asset import Asset
 from app.models.event import Event
+from app.services.opensearch_client import search_events as os_search_events
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -322,3 +323,73 @@ async def reveal_password(
         "password": password,
         "url": event.payload.get("url", ""),
     }
+
+
+@router.get("/search", summary="Полнотекстовый поиск по событиям (OpenSearch + PostgreSQL fallback)")
+async def search_events(
+    current_user: CurrentUser,
+    db: DBDep,
+    q: str = Query(..., min_length=2, max_length=200, description="Поисковый запрос"),
+    limit: int = Query(default=50, ge=1, le=200),
+    domain: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+) -> dict:
+    """
+    7.C.4: Полнотекстовый поиск через OpenSearch.
+    При недоступности OS — fallback на LIKE-поиск по PostgreSQL.
+    Результаты фильтруются по organization_id пользователя.
+    """
+    # Получаем домены организации для изоляции тенантов
+    asset_q = select(Asset.domain).where(
+        Asset.organization_id == current_user.organization_id,
+        Asset.is_active == True,  # noqa: E712
+    )
+    asset_result = await db.execute(asset_q)
+    org_domains = {row[0] for row in asset_result.all()}
+
+    # Попытка через OpenSearch
+    os_results = await os_search_events(q, limit=limit, domain=domain, severity=severity)
+    if os_results:
+        filtered = [r for r in os_results if r.get("target_domain") in org_domains]
+        return {"source": "opensearch", "total": len(filtered), "items": filtered[:limit]}
+
+    # Fallback: PostgreSQL LIKE-поиск
+    from sqlalchemy import or_, cast, String
+    pg_q = (
+        select(Event)
+        .join(Asset, Asset.id == Event.asset_id, isouter=True)
+        .where(
+            or_(
+                Asset.organization_id == current_user.organization_id,
+                Event.target_domain.in_(org_domains),
+            )
+        )
+    )
+    if domain:
+        pg_q = pg_q.where(Event.target_domain == domain)
+    if severity:
+        pg_q = pg_q.where(Event.severity == severity)
+    pg_q = pg_q.order_by(Event.detected_at.desc()).limit(limit)
+
+    result = await db.execute(pg_q)
+    events = result.scalars().all()
+
+    # Фильтруем по поисковому запросу в payload
+    q_lower = q.lower()
+    matched = [
+        {
+            "id": e.id,
+            "event_type": e.event_type,
+            "severity": e.severity,
+            "source_name": e.source_name,
+            "target_domain": e.target_domain,
+            "detected_at": e.detected_at.isoformat() if e.detected_at else None,
+            "payload": e.payload,
+        }
+        for e in events
+        if q_lower in str(e.payload).lower()
+        or q_lower in (e.target_domain or "").lower()
+        or q_lower in (e.source_name or "").lower()
+    ]
+
+    return {"source": "postgresql", "total": len(matched), "items": matched[:limit]}
