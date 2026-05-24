@@ -474,3 +474,41 @@ try:
 except ImportError:
     # Celery не установлен — модуль используется без воркера (тесты, отдельный запуск)
     pass
+
+
+def run_telegram_monitor_all_assets() -> None:
+    """
+    10.H: Celery Beat задача — мониторинг Telegram для всех активных активов.
+
+    Запрашивает список активов через Core API и запускает мониторинг Telegram-каналов
+    на упоминание каждого домена.
+    Запускается каждые 15 минут через Beat расписание.
+    """
+    import os
+
+    import httpx
+
+    core_url = os.environ.get("CORE_API_URL", "http://core:8000")
+    internal_secret = os.environ.get("INTERNAL_API_SECRET", "")
+
+    try:
+        resp = httpx.get(
+            f"{core_url}/api/v1/assets/",
+            headers={"Authorization": f"Bearer {internal_secret}"},
+            timeout=10,
+        )
+        assets = resp.json() if resp.is_success else []
+        logger.info("[beat] telegram-monitor-all: запускаем для %d активов", len(assets))
+        for asset in assets:
+            domain = asset.get("domain") if isinstance(asset, dict) else None
+            if domain:
+                try:
+                    monitor_telegram_channels(
+                        domain=domain,
+                        core_api_url=core_url,
+                        internal_secret=internal_secret,
+                    )
+                except Exception as exc:
+                    logger.warning("[beat] telegram-monitor-all: ошибка для %s: %s", domain, exc)
+    except Exception as exc:
+        logger.warning("[beat] telegram-monitor-all: ошибка получения активов: %s", exc)

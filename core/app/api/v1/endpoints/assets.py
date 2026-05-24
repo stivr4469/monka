@@ -478,3 +478,145 @@ async def download_executive_report(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─── 10.E: Asset Map — дерево инфраструктуры ──────────────────────────────────
+
+@router.get(
+    "/{asset_id}/map",
+    summary="Дерево инфраструктуры актива (Asset Map) — задача 10.E",
+)
+async def get_asset_map(
+    asset_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> dict:
+    """
+    10.E: Возвращает JSON-дерево инфраструктуры:
+    домен → поддомены → IP → порты → технологии.
+    Строится из Event.payload для данного актива.
+    """
+    # Проверяем принадлежность актива организации пользователя
+    asset_result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = asset_result.scalar_one_or_none()
+
+    if asset is None or asset.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Актив не найден")
+
+    # Загружаем последние 500 событий нужных типов
+    relevant_types = (
+        "subdomain_found",
+        "port_scan",
+        "exposed_service",
+        "tls_fingerprint",
+        "tech_profile",
+    )
+    events_result = await db.execute(
+        select(Event.event_type, Event.payload)
+        .where(
+            Event.asset_id == asset_id,
+            Event.event_type.in_(relevant_types),
+        )
+        .order_by(Event.detected_at.desc())
+        .limit(500)
+    )
+    events = events_result.all()
+
+    # Строим дерево: ключ — поддомен, значение — данные
+    # subdomain_data: { "sub.domain.com": { ip, ports: [...], technologies: [...] } }
+    subdomain_data: dict[str, dict] = {}
+
+    for ev_type, payload in events:
+        if not isinstance(payload, dict):
+            continue
+
+        if ev_type == "subdomain_found":
+            # payload: { subdomain, ip?, host? }
+            sub = payload.get("subdomain") or payload.get("host", "")
+            if not sub:
+                continue
+            ip = payload.get("ip") or payload.get("host_ip", "")
+            if sub not in subdomain_data:
+                subdomain_data[sub] = {"ip": ip, "ports": [], "technologies": []}
+            elif ip and not subdomain_data[sub]["ip"]:
+                subdomain_data[sub]["ip"] = ip
+
+        elif ev_type in ("port_scan", "exposed_service"):
+            # payload: { subdomain?, host?, ip?, port, service?, severity? }
+            sub = payload.get("subdomain") or payload.get("host", "")
+            port_num = payload.get("port")
+            if not port_num:
+                continue
+            ip = payload.get("ip") or payload.get("host_ip", "")
+            service = payload.get("service", "")
+            severity = payload.get("severity", "info")
+            if sub and sub not in subdomain_data:
+                subdomain_data[sub] = {"ip": ip, "ports": [], "technologies": []}
+            if sub:
+                # Не дублируем порты
+                existing_ports = [p["port"] for p in subdomain_data[sub]["ports"]]
+                if port_num not in existing_ports:
+                    subdomain_data[sub]["ports"].append({
+                        "port": port_num,
+                        "service": service,
+                        "severity": severity,
+                    })
+                if ip and not subdomain_data[sub]["ip"]:
+                    subdomain_data[sub]["ip"] = ip
+
+        elif ev_type == "tech_profile":
+            # payload: { subdomain?, host?, technologies: [...] }
+            sub = payload.get("subdomain") or payload.get("host", "")
+            techs = payload.get("technologies", [])
+            if not sub or not techs:
+                continue
+            if sub not in subdomain_data:
+                subdomain_data[sub] = {"ip": "", "ports": [], "technologies": []}
+            # Добавляем уникальные технологии
+            existing = set(subdomain_data[sub]["technologies"])
+            for t in techs:
+                if t not in existing:
+                    subdomain_data[sub]["technologies"].append(t)
+                    existing.add(t)
+
+        elif ev_type == "tls_fingerprint":
+            # payload: { subdomain?, host?, waf?, cdn?, server? }
+            sub = payload.get("subdomain") or payload.get("host", "")
+            if not sub:
+                continue
+            if sub not in subdomain_data:
+                subdomain_data[sub] = {"ip": "", "ports": [], "technologies": []}
+            # WAF/CDN/server добавляем как технологии
+            existing = set(subdomain_data[sub]["technologies"])
+            for key in ("waf", "cdn", "server"):
+                val = payload.get(key)
+                if val and val not in existing:
+                    subdomain_data[sub]["technologies"].append(val)
+                    existing.add(val)
+
+    # Считаем статистику
+    all_ports_count = sum(len(d["ports"]) for d in subdomain_data.values())
+    all_techs: set[str] = set()
+    for d in subdomain_data.values():
+        all_techs.update(d["technologies"])
+
+    # Формируем ответ
+    subdomains_list = [
+        {
+            "name": sub,
+            "ip": data["ip"],
+            "ports": sorted(data["ports"], key=lambda p: p["port"]),
+            "technologies": data["technologies"],
+        }
+        for sub, data in subdomain_data.items()
+    ]
+
+    return {
+        "domain": asset.domain,
+        "subdomains": subdomains_list,
+        "stats": {
+            "subdomains": len(subdomains_list),
+            "open_ports": all_ports_count,
+            "technologies": len(all_techs),
+        },
+    }

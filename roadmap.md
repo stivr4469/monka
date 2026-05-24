@@ -487,3 +487,133 @@ Begin by setting up the project structure and writing the initial files for Step
     system instructions. Create the folder structure, docker-compose.yml, and
     the FastAPI base with the NormalizedEvent schema».
 
+
+---
+
+## Фаза 10: Production UX, Enterprise Features & Full Automation
+
+**Цель:** Закрыть оставшиеся пункты BRD new_vision.md — Technology Profiling,
+Audit Log, анимированный Risk Score, Asset Map, CSV-экспорт, API-ключи,
+Stripe-биллинг и Celery Beat автоматизация полного скана.
+**Источник:** BRD new_vision.md Разделы 2,7,8 (Фаза 5 Milestones).
+
+---
+
+### 10.A Technology Profiling — Wappalyzer-like детекция технологий (Этап 6 конвейера)
+
+**Зачем:** Определить CMS, фреймворки, версии ПО. End-of-Life tracking — устаревшее ПО = уязвимость.
+
+- [ ] **10.A.1** Создать `workers/tasks/tech_profiler.py` — HTTP GET к домену, анализ заголовков (Server, X-Powered-By, Via), кук (PHPSESSID, laravel_session, wp-settings), мета-тегов (generator), JavaScript переменных
+- [ ] **10.A.2** Сигнатурная база: 30+ технологий (WordPress, Drupal, Joomla, Laravel, Django, Rails, React, Vue, Next.js, Nginx, Apache, IIS, Cloudflare, AWS)
+- [ ] **10.A.3** End-of-Life mapping: dict `{"nginx": {"1.18": "2020-04-21", ...}}` — если версия EOL → `severity="medium"`, event_type="tech_eol"
+- [ ] **10.A.4** `NormalizedEvent(event_type="tech_profile", severity="info/medium", payload={"technologies": [...], "eol_detected": [...]})`
+- [ ] **10.A.5** Добавить `POST /api/v1/scan/tech-profile` эндпоинт с rate limit 5/min
+- [ ] **10.A.6** Вкладка «Технологии» в UI — таблица технологий с badge EOL
+
+---
+
+### 10.B Password Decrypt + Audit Log
+
+**Зачем:** BRD явно требует кнопку «Расшифровать пароль» с audit-log (кто, когда, с какого IP).
+
+- [ ] **10.B.1** Создать модель `AuditLog` (таблица audit_logs): user_id, action, target_id, ip_address, user_agent, created_at
+- [ ] **10.B.2** Миграция Alembic для audit_logs
+- [ ] **10.B.3** Создать эндпоинт `GET /api/v1/events/{event_id}/reveal` — расшифровывает password_enc для событий с stealer/breach source_type, пишет в audit_log. Rate limit 10/hour per user.
+- [ ] **10.B.4** `GET /api/v1/audit-logs` (только superuser) — список последних 500 обращений к reveal
+- [ ] **10.B.5** В UI — кнопка «🔓 Расшифровать» в списке событий утечек (только для plan=professional/enterprise). Показывает пароль в модальном окне на 30 секунд, затем скрывает.
+- [ ] **10.B.6** Вкладка «Аудит» (только superuser) — таблица audit_logs
+
+---
+
+### 10.C Risk Score Animated SVG Gauge
+
+**Зачем:** BRD явно описывает "Risk Score Dial: круговой анимированный рейтинг (зелёный → красный)".
+
+- [ ] **10.C.1** Заменить текстовый score на SVG-gauge: дуга 270° с анимацией CSS transition
+- [ ] **10.C.2** Цвет по score: 75–100 = зелёный (#10b981), 40–74 = оранжевый (#f59e0b), 0–39 = красный (#ef4444)
+- [ ] **10.C.3** Число score внутри дуги, уровень (low/medium/high/critical) под числом
+- [ ] **10.C.4** Анимация появления: дуга рисуется от 0 до score за 800ms при загрузке
+- [ ] **10.C.5** Также добавить мини-gauge в карточки MSSP-клиентов
+
+---
+
+### 10.D CSV Export событий
+
+**Зачем:** BRD: "Технический PDF/CSV для инженеров". Текущий код PDF есть, CSV — нет.
+
+- [ ] **10.D.1** `GET /api/v1/events/export?format=csv&asset_id=X&severity=critical` — StreamingResponse с CSV
+- [ ] **10.D.2** Поля: id, event_type, severity, source_type, source_name, target_domain, detected_at, condition
+- [ ] **10.D.3** Защита: только события своей организации (через asset_id ownership check)
+- [ ] **10.D.4** Кнопка «⬇ CSV» в UI рядом с таблицей событий (скачивает текущий фильтр)
+
+---
+
+### 10.E Asset Map — Интерактивное дерево поддоменов
+
+**Зачем:** BRD: "Asset Map: интерактивное дерево поддоменов и IP".
+
+- [ ] **10.E.1** `GET /api/v1/assets/{asset_id}/map` — JSON дерево: домен → поддомены → IP → порты → технологии
+- [ ] **10.E.2** Данные строятся из Event.payload (события port_scan, tls_fingerprint, tech_profile, subdomain_found)
+- [ ] **10.E.3** Collapsible дерево в UI через vanilla JS — узлы раскрываются кликом
+- [ ] **10.E.4** Иконки по типу узла: 🌐 домен, 📡 поддомен, 🔌 IP, 🚪 порт, ⚙️ технология
+
+---
+
+### 10.F API Keys для SIEM/SOAR интеграции (Enterprise)
+
+**Зачем:** BRD: "SIEM/SOAR API — выгрузка для аудита" (Enterprise plan).
+
+- [ ] **10.F.1** Модель `ApiKey`: id, user_id, name, key_hash (SHA-256), permissions (JSON), created_at, last_used_at, expires_at
+- [ ] **10.F.2** Миграция Alembic
+- [ ] **10.F.3** `POST /api/v1/auth/api-keys` — создать ключ (возвращает raw key только один раз)
+- [ ] **10.F.4** `GET /api/v1/auth/api-keys` — список ключей (без raw значений)
+- [ ] **10.F.5** `DELETE /api/v1/auth/api-keys/{key_id}` — отозвать ключ
+- [ ] **10.F.6** Middleware/dependency `verify_api_key` — Bearer authentication альтернатива JWT для read-only endpoints
+- [ ] **10.F.7** UI: секция «API Keys» в настройках (только план enterprise)
+
+---
+
+### 10.G Stripe Billing — Upgrades
+
+**Зачем:** BRD явно описывает SaaS монетизацию. Текущий billing API без реального Stripe.
+
+- [ ] **10.G.1** Добавить `STRIPE_SECRET_KEY` и `STRIPE_WEBHOOK_SECRET` в .env
+- [ ] **10.G.2** `POST /api/v1/billing/checkout` — создать Stripe Checkout Session для upgrade плана
+- [ ] **10.G.3** `POST /api/v1/billing/webhook` — обработчик Stripe событий (checkout.session.completed, customer.subscription.updated/deleted)
+- [ ] **10.G.4** При успешной оплате — обновить org.plan в БД
+- [ ] **10.G.5** UI: кнопка «Улучшить план» → редирект на Stripe Checkout
+
+---
+
+### 10.H Celery Beat — Полная автоматизация скана
+
+**Зачем:** Сканирование должно работать без ручного запуска — автоматически каждые N часов.
+
+- [ ] **10.H.1** Создать `workers/celery_config.py` с `beat_schedule`: subdomain каждые 24ч, port scan каждые 24ч, tech_profile каждые 24ч, darknet каждые 1ч, telegram каждые 15мин
+- [ ] **10.H.2** `GET /api/v1/scheduled-scans` — текущее расписание и last_run для каждого модуля
+- [ ] **10.H.3** `POST /api/v1/scheduled-scans/{scan_type}/trigger` — немедленный запуск (для superuser)
+- [ ] **10.H.4** `PATCH /api/v1/scheduled-scans/{scan_type}` — изменить интервал (Enterprise)
+- [ ] **10.H.5** Хранить last_run, next_run, status (running/idle/error) в Redis (key: scan_status:{org_id}:{scan_type})
+- [ ] **10.H.6** UI: вкладка «Расписание» — таблица сканов с last_run и кнопкой «Запустить сейчас»
+
+---
+
+### 10.I Notifications Hub — Центр уведомлений
+
+**Зачем:** Реальное время важнее email. Пуш-уведомления в UI при появлении critical событий.
+
+- [ ] **10.I.1** SSE-эндпоинт `GET /api/v1/notifications/stream` — Server-Sent Events поток новых событий
+- [ ] **10.I.2** При ingest critical события → публикация в Redis Pub/Sub channel `notifications:{org_id}`
+- [ ] **10.I.3** SSE-хендлер подписывается на Redis Pub/Sub и пушит в EventSource клиента
+- [ ] **10.I.4** UI: notification bell icon в шапке, badge с числом непрочитанных, dropdown список
+- [ ] **10.I.5** `POST /api/v1/notifications/{id}/read` — пометить прочитанным
+- [ ] **10.I.6** Модель Notification: id, org_id, event_id, message, is_read, created_at + миграция
+
+---
+
+### 10.J Senior Code Review Phase 10
+
+- [ ] Полный security review фазы 10
+- [ ] Рефакторинг слабых мест
+- [ ] Финальная проверка production-readiness
+

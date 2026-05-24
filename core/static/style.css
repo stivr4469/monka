@@ -1620,3 +1620,255 @@ select option {
   .stat-card .value { font-size: 1.5rem; }
   .darknet-sources-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== 10.C: SVG GAUGE ===== */
+
+/* Контейнер gauge в виджете Risk Score */
+.risk-gauge-container {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 168px;
+  height: 168px;
+}
+
+/* SVG-дуга gauge: transition прописан inline через атрибут style */
+.gauge-arc { }
+
+/* Текст числа внутри gauge наследует цвет темы */
+.gauge-score-text { fill: var(--text); }
+
+/* ===== 10.E: ASSET MAP ===== */
+
+/* Статистика наверху дерева */
+.asset-map-stats {
+  display: flex;
+  gap: .75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: .625rem 1rem;
+  background: var(--surface-2, #1c2129);
+  border-radius: var(--radius-md);
+  font-size: .8125rem;
+  color: var(--text-2);
+}
+
+.asset-map-stat {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+}
+
+/* Дерево без маркеров */
+.asset-tree {
+  list-style: none;
+  font-size: .875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* Кликабельный узел дерева */
+.asset-tree-node {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .6rem 1rem;
+  cursor: default;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition);
+  user-select: none;
+}
+
+.asset-tree-node[data-expandable] {
+  cursor: pointer;
+}
+
+.asset-tree-node[data-expandable]:hover {
+  background: var(--surface-2, #1c2129);
+}
+
+.asset-tree-node.domain-root {
+  background: var(--surface-2, #1c2129);
+  font-weight: 600;
+}
+
+/* +/- иконка раскрытия */
+.asset-tree-toggle {
+  font-size: .75rem;
+  color: var(--text-muted);
+  width: 1rem;
+  flex-shrink: 0;
+  transition: transform var(--transition);
+}
+
+.asset-tree-toggle-empty {
+  width: 1rem;
+  flex-shrink: 0;
+}
+
+/* Дочерние узлы (collapsed по умолчанию) */
+.asset-tree-children {
+  display: none;
+  padding-left: 2.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg, #0d1117);
+}
+
+.asset-tree-children.open {
+  display: block;
+}
+
+/* Листовые узлы (IP, порт, технология) */
+.asset-tree-leaf {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  flex-wrap: wrap;
+  padding: .4rem 1rem;
+  font-size: .8125rem;
+  color: var(--text-2);
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+
+.asset-tree-leaf:last-child {
+  border-bottom: none;
+}
+
+/* Вложенные элементы поддомена */
+.asset-tree-item .asset-tree-node {
+  padding-left: 2rem;
+  background: transparent;
+}
+
+.asset-tree-item .asset-tree-children {
+  padding-left: 4rem;
+}
+
+/* Стили меток */
+.asset-tree-subdomain {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.asset-tree-domain {
+  color: var(--accent);
+}
+
+.asset-tree-ip {
+  color: var(--text-2);
+  font-family: monospace;
+  font-size: .8rem;
+}
+
+.asset-tree-service {
+  color: var(--text-muted);
+  font-size: .75rem;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.asset-tree-tech {
+  color: var(--text-2);
+  font-size: .75rem;
+  background: rgba(99,102,241,.15);
+  border: 1px solid rgba(99,102,241,.3);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* Severity badge на порту */
+.asset-tree-sev {
+  font-size: .7rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.sev-critical { color: var(--sev-critical, #f85149); }
+.sev-high     { color: var(--sev-high, #f0883e); }
+.sev-medium   { color: var(--sev-medium, #e3b341); }
+.sev-low      { color: var(--sev-low, #3fb950); }
+.sev-info     { color: var(--text-muted); }
+
+/* Бейджи-счётчики на поддомене */
+.asset-tree-badge {
+  font-size: .7rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,.07);
+  color: var(--text-muted);
+}
+
+.badge-ports {
+  background: rgba(239,68,68,.12);
+  color: #ef4444;
+}
+
+.badge-techs {
+  background: rgba(99,102,241,.12);
+  color: #6366f1;
+}
+
+/* ─── Technology Profiling (задача 10.A) ─── */
+
+/* EOL badge — красный, привлекает внимание */
+.badge-eol {
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  padding: .18rem .5rem;
+  border-radius: 4px;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  background: rgba(248, 81, 73, .15);
+  color: var(--sev-critical);
+  border: 1px solid rgba(248, 81, 73, .3);
+}
+
+/* OK badge — зелёный */
+.badge-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  padding: .18rem .5rem;
+  border-radius: 4px;
+  font-size: .72rem;
+  font-weight: 600;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+/* Таблица технологий — наследует стандартные стили table-wrapper */
+.tech-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tech-table th,
+.tech-table td {
+  padding: .6rem .875rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.tech-table th {
+  font-size: .78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-2);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.tech-table tbody tr:hover {
+  background: var(--surface-2);
+}

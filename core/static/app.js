@@ -407,6 +407,19 @@ class API {
     return res.json();
   }
 
+  /** POST /api/v1/scan/tech-profile — Technology Profiling (задача 10.A) */
+  static async scanTechProfile(domain) {
+    const res = await this.request('/api/v1/scan/tech-profile', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
   /** POST /api/v1/scan/tls */
   static async scanTls(domain) {
     const res = await this.request('/api/v1/scan/tls', {
@@ -639,8 +652,112 @@ function riskScoreColor(score) {
   return '#f85149';
 }
 
+// ─────────────────────────────────────────────
+// 10.C: SVG Gauge — анимированная дуга 270°
+// ─────────────────────────────────────────────
+
 /**
- * Анимирует круговой индикатор Risk Score.
+ * Строит SVG gauge (270°, R=54, 160×160).
+ * score >= 75 → зелёный (low risk), >= 40 → оранжевый, иначе → красный.
+ * @param {number} score — 0..100
+ * @returns {string} HTML строка с <svg>
+ */
+function _buildGaugeSvg(score) {
+  const R = 54;
+  const CX = 70, CY = 70;
+  const CIRCUM = 2 * Math.PI * R;      // полная длина окружности ≈ 339.29
+  const ARC_FRACTION = 0.75;           // 270° = 75% окружности
+  const arcLen = CIRCUM * ARC_FRACTION; // длина видимой дуги ≈ 254.47
+
+  // Длина заполненной части дуги
+  const clamped = Math.max(0, Math.min(100, score));
+  const filled  = arcLen * (clamped / 100);
+  const gap     = arcLen - filled;
+
+  // Цвет: высокий score = низкий риск (зелёный хорошо)
+  const color = clamped >= 75 ? '#10b981'
+              : clamped >= 40 ? '#f59e0b'
+              :                 '#ef4444';
+
+  // Уровень риска (инвертированный: high score = low risk)
+  const level = clamped >= 75 ? 'LOW'
+              : clamped >= 40 ? 'MEDIUM'
+              : clamped >= 15 ? 'HIGH'
+              :                 'CRITICAL';
+
+  // Оставшаяся часть окружности (невидимый хвост чтобы не замкнуть круг)
+  const bgGap = CIRCUM - arcLen;
+
+  return `
+    <svg viewBox="0 0 140 140" width="160" height="160" role="img" aria-label="Risk Score: ${clamped}">
+      <!-- Фоновая дуга (серая) — 270° -->
+      <circle cx="${CX}" cy="${CY}" r="${R}"
+        fill="none" stroke="rgba(255,255,255,.1)" stroke-width="12"
+        stroke-dasharray="${arcLen.toFixed(2)} ${bgGap.toFixed(2)}"
+        stroke-linecap="round"
+        transform="rotate(135 ${CX} ${CY})"/>
+      <!-- Цветная дуга (значение score) — анимируется через CSS transition -->
+      <circle cx="${CX}" cy="${CY}" r="${R}"
+        fill="none" stroke="${color}" stroke-width="12"
+        stroke-dasharray="${filled.toFixed(2)} ${(CIRCUM - filled).toFixed(2)}"
+        stroke-linecap="round"
+        transform="rotate(135 ${CX} ${CY})"
+        class="gauge-arc"
+        style="transition: stroke-dasharray 800ms cubic-bezier(.4,0,.2,1), stroke 400ms ease"/>
+      <!-- Число по центру -->
+      <text x="${CX}" y="${CY + 8}" text-anchor="middle"
+        fill="currentColor" font-size="28" font-weight="700"
+        class="gauge-score-text">${clamped}</text>
+      <!-- Уровень риска под числом -->
+      <text x="${CX}" y="${CY + 26}" text-anchor="middle"
+        fill="${color}" font-size="10" font-weight="600"
+        letter-spacing="1">${level}</text>
+    </svg>`;
+}
+
+/**
+ * 10.C: Мини-gauge для карточек MSSP (60×60, R=22).
+ * @param {number} score — 0..100
+ * @returns {string} HTML строка с <svg>
+ */
+function _buildMiniGaugeSvg(score) {
+  const R = 22;
+  const CX = 30, CY = 30;
+  const CIRCUM = 2 * Math.PI * R;
+  const ARC_FRACTION = 0.75;
+  const arcLen = CIRCUM * ARC_FRACTION;
+
+  const clamped = Math.max(0, Math.min(100, score));
+  const filled  = arcLen * (clamped / 100);
+  const bgGap   = CIRCUM - arcLen;
+
+  const color = clamped >= 75 ? '#10b981'
+              : clamped >= 40 ? '#f59e0b'
+              :                 '#ef4444';
+
+  return `
+    <svg viewBox="0 0 60 60" width="52" height="52" role="img" aria-label="Risk Score: ${clamped}"
+         style="flex-shrink:0">
+      <circle cx="${CX}" cy="${CY}" r="${R}"
+        fill="none" stroke="rgba(255,255,255,.1)" stroke-width="5"
+        stroke-dasharray="${arcLen.toFixed(2)} ${bgGap.toFixed(2)}"
+        stroke-linecap="round"
+        transform="rotate(135 ${CX} ${CY})"/>
+      <circle cx="${CX}" cy="${CY}" r="${R}"
+        fill="none" stroke="${color}" stroke-width="5"
+        stroke-dasharray="${filled.toFixed(2)} ${(CIRCUM - filled).toFixed(2)}"
+        stroke-linecap="round"
+        transform="rotate(135 ${CX} ${CY})"
+        class="gauge-arc"
+        style="transition: stroke-dasharray 800ms cubic-bezier(.4,0,.2,1)"/>
+      <text x="${CX}" y="${CY + 4}" text-anchor="middle"
+        fill="${color}" font-size="11" font-weight="700">${clamped}</text>
+    </svg>`;
+}
+
+/**
+ * 10.C: Рендерит SVG gauge в #risk-score-gauge.
+ * При первом рендере запускает анимацию: 0 → реальное значение.
  * @param {number|null} score — число 0-100 или null (N/A)
  * @param {Array|null} breakdown — массив RiskEventItem из API (9.H.4)
  */
@@ -648,36 +765,43 @@ function renderRiskScore(score, breakdown) {
   const widget = document.getElementById('risk-score-widget');
   if (!widget) return;
 
-  const fill  = widget.querySelector('.risk-dial-fill');
-  const value = widget.querySelector('.risk-dial-value');
+  const gaugeContainer = document.getElementById('risk-score-gauge');
   const desc  = widget.querySelector('.risk-score-desc');
 
   if (score === null || score === undefined) {
-    if (fill)  fill.style.strokeDashoffset = '201';
-    if (value) value.textContent = 'N/A';
-    if (desc)  desc.textContent  = 'Нет данных о риске';
-    if (fill)  fill.style.stroke = 'var(--text-muted)';
+    // N/A состояние — серый gauge с прочерком
+    if (gaugeContainer) {
+      gaugeContainer.innerHTML = `
+        <svg viewBox="0 0 140 140" width="160" height="160" role="img" aria-label="Risk Score: нет данных">
+          <circle cx="70" cy="70" r="54"
+            fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"
+            stroke-dasharray="254.47 84.82"
+            stroke-linecap="round"
+            transform="rotate(135 70 70)"/>
+          <text x="70" y="78" text-anchor="middle"
+            fill="var(--text-muted)" font-size="28" font-weight="700">N/A</text>
+          <text x="70" y="96" text-anchor="middle"
+            fill="var(--text-muted)" font-size="10" font-weight="600" letter-spacing="1">NO DATA</text>
+        </svg>`;
+    }
+    if (desc) desc.textContent = 'Нет данных о риске';
     _renderRiskBreakdown([]);
     return;
   }
 
-  const clamped  = Math.max(0, Math.min(100, score));
-  const color    = riskScoreColor(clamped);
-  const offset   = 201 - (201 * clamped / 100); // stroke-dashoffset
+  const clamped = Math.max(0, Math.min(100, score));
 
-  // Устанавливаем цвет сразу, offset — через requestAnimationFrame для анимации
-  if (fill)  fill.style.stroke = color;
-  if (value) value.style.color = color;
+  if (gaugeContainer) {
+    // Анимация появления: сначала score=0, потом реальное значение
+    gaugeContainer.innerHTML = _buildGaugeSvg(0);
+    setTimeout(() => {
+      gaugeContainer.innerHTML = _buildGaugeSvg(clamped);
+    }, 50);
+  }
 
-  requestAnimationFrame(() => {
-    if (fill) fill.style.strokeDashoffset = String(offset);
-  });
-
-  if (value) value.textContent = clamped;
-
-  const labels = ['Низкий', 'Средний', 'Высокий', 'Критический'];
-  const idx = clamped <= 30 ? 0 : clamped <= 60 ? 1 : clamped <= 80 ? 2 : 3;
-  if (desc) desc.textContent = `Уровень риска: ${labels[idx]}`;
+  const labels = ['Низкий риск', 'Средний риск', 'Высокий риск', 'Критический риск'];
+  const idx = clamped >= 75 ? 0 : clamped >= 40 ? 1 : clamped >= 15 ? 2 : 3;
+  if (desc) desc.textContent = `${labels[idx]} — score ${clamped}/100`;
 
   // 9.H.4: Отображаем список штрафов с условиями устранения
   _renderRiskBreakdown(breakdown || []);
@@ -1238,31 +1362,154 @@ function buildEventsTable(events) {
   }).join('');
 }
 
+// ── 10.B: Reveal Password + Audit Log ────────────────────
+// Таймеры модала расшифровки
+let _revealTimer     = null;
+let _revealCountdown = null;
+
+/**
+ * 10.B: GET /api/v1/events/{id}/reveal — расшифровывает пароль, пишет audit_log.
+ * Показывает модал с таймером 30 сек, затем закрывает и очищает данные.
+ */
 async function revealPassword(eventId) {
-  const el  = document.getElementById(`pwd-${eventId}`);
-  const btn = el && el.nextElementSibling;
-  if (!el) return;
+  // Inline-элемент в payload stealer_log
+  const inlineEl  = document.getElementById(`pwd-${eventId}`);
+  const inlineBtn = inlineEl && inlineEl.nextElementSibling;
+  if (inlineBtn) inlineBtn.disabled = true;
 
-  if (el.dataset.revealed === '1') {
-    el.textContent = '***';
-    el.dataset.revealed = '0';
-    if (btn) btn.textContent = 'Показать';
-    return;
-  }
-
-  if (btn) btn.disabled = true;
   try {
-    const res  = await API.request(`/api/v1/events/${eventId}/reveal`, { method: 'POST' });
+    // GET эндпоинт с аудит-логом (задача 10.B)
+    const res  = await API.request(`/api/v1/events/${eventId}/reveal`);
     if (!res) return;
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    el.textContent      = data.password || '(пусто)';
-    el.dataset.revealed = '1';
-    el.style.color      = 'var(--sev-critical)';
-    if (btn) { btn.textContent = 'Скрыть'; btn.disabled = false; }
+
+    // Открываем модальное окно
+    const modal = document.getElementById('reveal-modal');
+    if (modal) {
+      const urlEl   = document.getElementById('reveal-url');
+      const loginEl = document.getElementById('reveal-login');
+      const pwdEl   = document.getElementById('reveal-password');
+      const cntEl   = document.getElementById('reveal-countdown');
+      if (urlEl)   urlEl.textContent   = data.url   || '—';
+      if (loginEl) loginEl.textContent  = data.login || '—';
+      if (pwdEl)   pwdEl.textContent   = data.password || '(пусто)';
+      modal.style.display = 'flex';
+
+      // Таймер обратного отсчёта
+      const seconds = data.expires_in_seconds || 30;
+      let remaining = seconds;
+      if (cntEl) cntEl.textContent = remaining;
+      clearTimeout(_revealTimer);
+      clearInterval(_revealCountdown);
+      _revealCountdown = setInterval(() => {
+        remaining -= 1;
+        if (cntEl) cntEl.textContent = Math.max(0, remaining);
+      }, 1000);
+      _revealTimer = setTimeout(() => closeRevealModal(), seconds * 1000);
+    }
+
+    // Обновляем inline-элемент в таблице
+    if (inlineEl) {
+      inlineEl.textContent      = data.password || '(пусто)';
+      inlineEl.dataset.revealed = '1';
+      inlineEl.style.color      = 'var(--sev-critical)';
+    }
+    if (inlineBtn) { inlineBtn.textContent = 'Скрыть'; inlineBtn.disabled = false; }
+
   } catch (err) {
     Toast.show('error', 'Ошибка расшифровки', err.message);
-    if (btn) btn.disabled = false;
+    if (inlineBtn) inlineBtn.disabled = false;
+  }
+}
+
+/** Закрывает модал и очищает таймеры + данные пароля. */
+function closeRevealModal() {
+  clearTimeout(_revealTimer);
+  clearInterval(_revealCountdown);
+  _revealTimer     = null;
+  _revealCountdown = null;
+  const modal = document.getElementById('reveal-modal');
+  if (modal) modal.style.display = 'none';
+  const pwdEl = document.getElementById('reveal-password');
+  if (pwdEl) pwdEl.textContent = '—';
+}
+
+// ── 10.D: CSV Export ─────────────────────────────────────
+
+/**
+ * Экспорт событий в CSV с текущими фильтрами.
+ * window.open скачивает файл без блокировки UI.
+ */
+function exportEventsCSV() {
+  const params = new URLSearchParams({ format: 'csv' });
+
+  const severity  = document.getElementById('filter-severity')?.value;
+  const eventType = document.getElementById('filter-type')?.value;
+  const domain    = document.getElementById('filter-domain')?.value.trim();
+
+  if (severity)  params.set('severity', severity);
+  if (eventType) params.set('event_type', eventType);
+  if (domain)    params.set('domain', domain);
+
+  // Токен передаём как параметр чтобы браузер не блокировал загрузку файла
+  const token = API.getToken();
+  if (token) params.set('_token', token);
+
+  window.open(`/api/v1/events/export?${params.toString()}`, '_blank');
+}
+
+// ── 10.B: Audit Logs ─────────────────────────────────────
+
+/**
+ * Загрузка журнала аудита — только для superuser.
+ * 403 → скрываем вкладку Аудит и тихо завершаемся.
+ */
+async function loadAuditLogs() {
+  const tbody  = document.getElementById('audit-logs-tbody');
+  const navTab = document.getElementById('audit-nav-tab');
+
+  if (!tbody) return;
+
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+    <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+  </td></tr>`;
+
+  try {
+    const res = await API.request('/api/v1/audit-logs?limit=100');
+
+    // 403 — не superuser
+    if (res && res.status === 403) {
+      if (navTab) navTab.style.display = 'none';
+      tbody.innerHTML = '';
+      return;
+    }
+
+    if (!res || !res.ok) {
+      tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Ошибка загрузки аудит-лога')}</td></tr>`;
+      return;
+    }
+
+    const logs = await res.json();
+    if (navTab) navTab.style.display = ''; // показываем вкладку superuser-у
+
+    if (!logs.length) {
+      tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Записей аудита пока нет')}</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = logs.map(log => `
+      <tr>
+        <td style="font-family:var(--font-mono);font-size:.8125rem;word-break:break-all">${escHtml(log.user_id)}</td>
+        <td><code style="font-size:.8125rem">${escHtml(log.action)}</code></td>
+        <td style="font-family:var(--font-mono);font-size:.8125rem">${escHtml(log.target_id)}</td>
+        <td style="color:var(--text-2)">${escHtml(log.ip_address)}</td>
+        <td style="color:var(--text-muted);font-size:.8125rem;white-space:nowrap">${fmtDate(log.created_at)}</td>
+      </tr>`).join('');
+
+  } catch (err) {
+    Toast.show('error', 'Ошибка аудит-лога', err.message);
+    tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Не удалось загрузить аудит')}</td></tr>`;
   }
 }
 
@@ -2025,6 +2272,116 @@ async function loadEmployees() {
 }
 
 // ─────────────────────────────────────────────
+// Technology Profiling (задача 10.A)
+// ─────────────────────────────────────────────
+
+/**
+ * Запускает Technology Profiling для домена из поля darknet-domain.
+ * Результат отображает в таблице вкладки "Технологии".
+ */
+async function handleTechScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для Tech Scan');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+
+  const btn = document.getElementById('tech-scan-btn');
+  setLoading(btn, true);
+  try {
+    const data = await API.scanTechProfile(domain);
+    const techCount = (data.technologies || []).length;
+    const eolCount  = (data.eol_detected || []).length;
+    const msg = eolCount > 0
+      ? `Найдено технологий: ${techCount}, EOL: ${eolCount}`
+      : `Найдено технологий: ${techCount}`;
+    Toast.show(eolCount > 0 ? 'warning' : 'success', 'Tech Scan завершён', msg);
+    addScanLog('ok', domain, `tech scan: ${techCount} технологий, EOL=${eolCount}`);
+    // Обновляем таблицу вкладки Технологии
+    loadTechnologies();
+  } catch (e) {
+    Toast.show('error', 'Ошибка Tech Scan', e.message);
+    addScanLog('error', domain, `tech scan: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/**
+ * Загружает события tech_profile и отображает таблицу на вкладке Технологии.
+ * Каждое событие содержит список обнаруженных технологий для одного домена.
+ */
+async function loadTechnologies() {
+  const tbody = document.getElementById('tech-tbody');
+  const noDomain = document.getElementById('tech-no-domain');
+  if (!tbody) return;
+
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+    <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+  </td></tr>`;
+
+  try {
+    const events = await API.getEvents({ event_type: 'tech_profile', limit: 200 });
+
+    if (!events || events.length === 0) {
+      if (noDomain) noDomain.style.display = '';
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+        Нет данных. Запустите ⚙️ Tech Scan на вкладке Darknet.
+      </td></tr>`;
+      return;
+    }
+
+    if (noDomain) noDomain.style.display = 'none';
+
+    // Разворачиваем: каждое событие → N строк (по одной на технологию)
+    const rows = [];
+    for (const ev of events) {
+      const p = ev.payload || {};
+      const techs = p.technologies || [];
+      const eolSet = new Set((p.eol_detected || []).map(e => e.tech));
+      const domain = ev.target_domain || '—';
+      const time = ev.detected_at
+        ? new Date(ev.detected_at).toLocaleString('ru-RU', { timeZone: 'UTC' })
+        : '—';
+
+      if (techs.length === 0) {
+        rows.push(`<tr>
+          <td colspan="2" style="color:var(--text-muted)">Не обнаружено</td>
+          <td>${escHtml(domain)}</td>
+          <td><span class="badge badge-info">info</span></td>
+          <td style="color:var(--text-muted);font-size:.8rem">${escHtml(time)}</td>
+        </tr>`);
+        continue;
+      }
+
+      for (const tech of techs) {
+        const isEol = eolSet.has(tech.name);
+        const version = tech.version ? escHtml(tech.version) : '—';
+        const statusBadge = isEol
+          ? '<span class="badge badge-eol">⚠️ EOL</span>'
+          : '<span class="badge badge-ok">✓ OK</span>';
+
+        rows.push(`<tr>
+          <td><strong>${escHtml(tech.name)}</strong></td>
+          <td style="font-family:monospace;font-size:.85rem">${version}</td>
+          <td style="color:var(--text-2)">${escHtml(domain)}</td>
+          <td>${statusBadge}</td>
+          <td style="color:var(--text-muted);font-size:.8rem">${escHtml(time)}</td>
+        </tr>`);
+      }
+    }
+
+    tbody.innerHTML = rows.join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger);padding:1rem">
+      Ошибка загрузки: ${escHtml(e.message)}
+    </td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────
 // Навигация по табам
 // ─────────────────────────────────────────────
 
@@ -2041,6 +2398,14 @@ const TAB_LOADERS = {
   graph:     () => { stopDashboardRefresh(); stopEventsPolling(); },
   // Human OSINT (задача 9.D): загружаем профили при переключении на вкладку
   employees: () => { stopDashboardRefresh(); stopEventsPolling(); loadEmployees(); },
+  // Technology Profiling (задача 10.A)
+  tech:      () => { stopDashboardRefresh(); stopEventsPolling(); loadTechnologies(); },
+  // Asset Map (задача 10.E): заполняем dropdown активов и загружаем карту первого
+  map:       () => { stopDashboardRefresh(); stopEventsPolling(); loadAssetMapForCurrentAsset(); },
+  // Аудит расшифровок (задача 10.B) — только superuser
+  audit:     () => { stopDashboardRefresh(); stopEventsPolling(); loadAuditLogs(); },
+  // API Keys (задача 10.F) — Enterprise/superuser
+  'api-keys': () => { stopDashboardRefresh(); stopEventsPolling(); ApiKeys.load(); },
 };
 
 function switchTab(name) {
@@ -2447,14 +2812,22 @@ function _msspClientCardHtml(c) {
   const planKey = (c.plan || 'starter').toLowerCase();
   const planClass = `mssp-plan plan-${escHtml(planKey)}`;
 
+  // 10.C: мини SVG gauge рядом со score
+  const miniGauge = _buildMiniGaugeSvg(c.risk_score);
+
   return `
     <div class="${cardClass}" data-org-id="${escHtml(c.organization_id)}">
       <div class="mssp-org-name" title="${escHtml(c.organization_name)}">
         ${escHtml(c.organization_name)}
       </div>
-      <div class="mssp-score" style="color:${scoreColor}"
-           title="Risk Score (0=плохо, 100=хорошо)">${c.risk_score}</div>
-      <div class="mssp-delta" title="Изменение рейтинга за 24 часа">${deltaStr} за 24ч</div>
+      <div class="mssp-score-gauge" title="Risk Score (0=плохо, 100=хорошо)"
+           style="display:flex;align-items:center;gap:.5rem">
+        ${miniGauge}
+        <div>
+          <div class="mssp-score" style="color:${scoreColor}">${c.risk_score}</div>
+          <div class="mssp-delta" title="Изменение рейтинга за 24 часа">${deltaStr} за 24ч</div>
+        </div>
+      </div>
       <div class="mssp-meta">${c.domain_count} дом. &middot; ${criticalNote}${lastSeen}</div>
       <span class="${planClass}">${escHtml(c.plan.toUpperCase())}</span>
     </div>`;
@@ -2731,6 +3104,16 @@ function init() {
   // Тихая проверка при старте: если 403 — вкладка остаётся скрытой.
   loadMsspClients();
 
+  // 10.I: Запускаем центр уведомлений (SSE + badge)
+  NotifHub.init();
+
+  // 10.F: Показываем вкладку API Keys (проверяем доступ — Enterprise/superuser)
+  _maybeShowApiKeysTab();
+
+  // 10.B: Тихая проверка superuser — показываем вкладку Аудит только superuser.
+  // loadAuditLogs проверяет /api/v1/audit-logs: 403 → скрывает вкладку.
+  loadAuditLogs();
+
   // Навигация
   document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab));
@@ -2738,6 +3121,13 @@ function init() {
 
   // Закрытие модалок
   Modal.bindBackdrop('add-asset-modal');
+  // 10.B: клик на backdrop reveal-modal закрывает его
+  const revealBackdrop = document.getElementById('reveal-modal');
+  if (revealBackdrop) {
+    revealBackdrop.addEventListener('click', e => {
+      if (e.target === revealBackdrop) closeRevealModal();
+    });
+  }
 
   // Enter в модальных формах
   document.querySelectorAll('.modal input').forEach(inp => {
@@ -2775,6 +3165,566 @@ function init() {
   // Показываем первый таб
   switchTab('dashboard');
 }
+
+
+/**
+ * 10.F: Проверяем можно ли показать вкладку API Keys.
+ * Делаем тихий GET запрос — если 403 (не Enterprise) оставляем скрытой.
+ */
+async function _maybeShowApiKeysTab() {
+  try {
+    const res = await API.request('/api/v1/auth/api-keys');
+    const navTab = document.getElementById('api-keys-nav-tab');
+    if (res && res.ok && navTab) {
+      navTab.style.display = '';  // показываем вкладку
+    }
+  } catch (_) { /* 403 или ошибка — вкладка остаётся скрытой */ }
+}
+
+// ─────────────────────────────────────────────
+// 10.E: Asset Map — интерактивное дерево инфраструктуры
+// ─────────────────────────────────────────────
+
+/**
+ * Загружает Asset Map для текущего первого актива.
+ * Заполняет dropdown #map-asset-select и показывает карту.
+ */
+async function loadAssetMapForCurrentAsset() {
+  // Заполняем dropdown активами
+  const select = document.getElementById('map-asset-select');
+  if (select && State.assetsData && State.assetsData.length > 0) {
+    select.innerHTML = State.assetsData.map(a =>
+      `<option value="${escHtml(a.id)}">${escHtml(a.domain)}</option>`
+    ).join('');
+    // Загружаем карту первого актива автоматически
+    await loadAssetMapById(State.assetsData[0].id);
+  } else if (select) {
+    // Активы ещё не загружены — запрашиваем
+    try {
+      const assets = await API.getAssets();
+      if (assets && assets.length > 0) {
+        select.innerHTML = assets.map(a =>
+          `<option value="${escHtml(a.id)}">${escHtml(a.domain)}</option>`
+        ).join('');
+        await loadAssetMapById(assets[0].id);
+      } else {
+        _renderAssetMapEmpty();
+      }
+    } catch {
+      _renderAssetMapEmpty();
+    }
+  }
+}
+
+/**
+ * Загружает и отображает Asset Map для конкретного актива.
+ * @param {string} assetId
+ */
+async function loadAssetMapById(assetId) {
+  const treeEl = document.getElementById('asset-map-tree');
+  if (!treeEl || !assetId) return;
+
+  // Skeleton во время загрузки
+  treeEl.innerHTML = `
+    <div class="loading-skeleton skeleton-line" style="height:44px;margin-bottom:.5rem"></div>
+    <div class="loading-skeleton skeleton-line" style="height:44px;margin-bottom:.5rem;width:90%;margin-left:1.5rem"></div>
+    <div class="loading-skeleton skeleton-line" style="height:44px;margin-bottom:.5rem;width:80%;margin-left:3rem"></div>`;
+
+  try {
+    const res = await API.request(`/api/v1/assets/${encodeURIComponent(assetId)}/map`);
+    if (!res || !res.ok) {
+      treeEl.innerHTML = `
+        <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+          Не удалось загрузить карту (статус: ${res ? res.status : 'нет ответа'})
+        </div>`;
+      return;
+    }
+    const data = await res.json();
+    treeEl.innerHTML = _renderAssetTree(data);
+
+    // Инициализируем клики для раскрытия/скрытия узлов
+    treeEl.querySelectorAll('.asset-tree-node[data-expandable]').forEach(node => {
+      node.addEventListener('click', e => {
+        e.stopPropagation();
+        const children = node.nextElementSibling;
+        if (children && children.classList.contains('asset-tree-children')) {
+          const isOpen = children.classList.toggle('open');
+          const toggle = node.querySelector('.asset-tree-toggle');
+          if (toggle) toggle.textContent = isOpen ? '▾' : '▸';
+        }
+      });
+    });
+  } catch (err) {
+    treeEl.innerHTML = `
+      <div style="text-align:center;padding:2rem;color:var(--sev-critical)">
+        Ошибка: ${escHtml(err.message)}
+      </div>`;
+  }
+}
+
+/**
+ * Отображает заглушку если нет активов или данных.
+ */
+function _renderAssetMapEmpty() {
+  const treeEl = document.getElementById('asset-map-tree');
+  if (!treeEl) return;
+  treeEl.innerHTML = `
+    <div style="text-align:center;padding:3rem;color:var(--text-muted)">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.2" style="display:block;margin:0 auto .75rem;opacity:.4">
+        <path d="M6 2L2 4v8l4-2 4 2 4-2V2l-4 2-4-2z"/>
+        <path d="M6 2v8M10 4v8"/>
+      </svg>
+      <div style="margin-bottom:.5rem">Нет данных инфраструктуры</div>
+      <div style="font-size:.8125rem">
+        Запустите сканирование (Subfinder + Port Scan + TLS) — данные появятся автоматически
+      </div>
+    </div>`;
+}
+
+/**
+ * Иконка для порта по severity.
+ * @param {string} severity
+ * @returns {string}
+ */
+function _portIcon(severity) {
+  switch ((severity || '').toLowerCase()) {
+    case 'critical': return '🔴';
+    case 'high':     return '🟠';
+    case 'medium':   return '🟡';
+    default:         return '⚪';
+  }
+}
+
+/**
+ * 10.E: Рекурсивный рендер дерева инфраструктуры.
+ * Структура: домен → поддомены → IP → порты → технологии.
+ * @param {Object} data — ответ от /api/v1/assets/{id}/map
+ * @returns {string} HTML
+ */
+function _renderAssetTree(data) {
+  if (!data || !data.domain) return '<div style="color:var(--text-muted)">Нет данных</div>';
+
+  const { domain, subdomains = [], stats = {} } = data;
+
+  // Если нет поддоменов — graceful
+  if (subdomains.length === 0) {
+    return `
+      <div class="asset-tree">
+        <div class="asset-tree-node" data-expandable>
+          <span class="asset-tree-toggle">▸</span>
+          <span>🌐</span>
+          <strong>${escHtml(domain)}</strong>
+          <span class="asset-tree-badge">корневой домен</span>
+        </div>
+        <div class="asset-tree-children open">
+          <div style="padding:.75rem 1rem;color:var(--text-muted);font-size:.875rem">
+            📡 Поддомены не обнаружены. Запустите сканирование (Subfinder + Port Scan).
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // Статистика наверху
+  const statsHtml = `
+    <div class="asset-map-stats">
+      <span class="asset-map-stat">📡 <strong>${stats.subdomains || 0}</strong> поддоменов</span>
+      <span class="asset-map-stat">🚪 <strong>${stats.open_ports || 0}</strong> портов</span>
+      <span class="asset-map-stat">⚙️ <strong>${stats.technologies || 0}</strong> технологий</span>
+    </div>`;
+
+  // Дерево поддоменов
+  const subdomainsHtml = subdomains.map(sub => {
+    const hasChildren = sub.ports.length > 0 || sub.technologies.length > 0 || sub.ip;
+
+    // IP-блок
+    const ipHtml = sub.ip
+      ? `<div class="asset-tree-leaf">🖥 <span class="asset-tree-ip">${escHtml(sub.ip)}</span></div>`
+      : '';
+
+    // Порты
+    const portsHtml = sub.ports.length > 0
+      ? sub.ports.map(p => `
+          <div class="asset-tree-leaf">
+            ${_portIcon(p.severity)} 🚪 <strong>${p.port}</strong>
+            ${p.service ? `<span class="asset-tree-service">${escHtml(p.service)}</span>` : ''}
+            <span class="asset-tree-sev sev-${escHtml(p.severity)}">${escHtml(p.severity)}</span>
+          </div>`).join('')
+      : '';
+
+    // Технологии
+    const techsHtml = sub.technologies.length > 0
+      ? `<div class="asset-tree-leaf">⚙️ ${sub.technologies.map(t => `<span class="asset-tree-tech">${escHtml(t)}</span>`).join(' ')}</div>`
+      : '';
+
+    const childrenHtml = hasChildren
+      ? `<div class="asset-tree-children">
+          ${ipHtml}
+          ${portsHtml}
+          ${techsHtml}
+        </div>`
+      : '';
+
+    return `
+      <div class="asset-tree-item">
+        <div class="asset-tree-node" ${hasChildren ? 'data-expandable' : ''}>
+          ${hasChildren ? '<span class="asset-tree-toggle">▸</span>' : '<span class="asset-tree-toggle-empty"></span>'}
+          <span>📡</span>
+          <span class="asset-tree-subdomain">${escHtml(sub.name)}</span>
+          ${sub.ports.length > 0 ? `<span class="asset-tree-badge badge-ports">${sub.ports.length} портов</span>` : ''}
+          ${sub.technologies.length > 0 ? `<span class="asset-tree-badge badge-techs">${sub.technologies.length} tech</span>` : ''}
+        </div>
+        ${childrenHtml}
+      </div>`;
+  }).join('');
+
+  return `
+    ${statsHtml}
+    <div class="asset-tree">
+      <div class="asset-tree-node domain-root" data-expandable>
+        <span class="asset-tree-toggle">▾</span>
+        <span>🌐</span>
+        <strong class="asset-tree-domain">${escHtml(domain)}</strong>
+        <span class="asset-tree-badge">${subdomains.length} поддоменов</span>
+      </div>
+      <div class="asset-tree-children open">
+        ${subdomainsHtml}
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────
+// 10.I — Notification Hub (SSE + REST)
+// ─────────────────────────────────────────────
+
+const NotifHub = {
+  /** Активный EventSource для SSE потока */
+  _source: null,
+  /** Видим ли dropdown */
+  _open: false,
+
+  /** Инициализация: запускаем SSE и подтягиваем счётчик */
+  async init() {
+    // Первоначальная загрузка счётчика непрочитанных
+    await this.refreshCount();
+
+    // Подключаем SSE поток для получения новых уведомлений в реальном времени
+    this._connectSSE();
+
+    // Закрытие dropdown при клике вне его
+    document.addEventListener('click', (e) => {
+      const bell = document.getElementById('notif-bell');
+      const dropdown = document.getElementById('notif-dropdown');
+      if (bell && dropdown && !bell.contains(e.target) && !dropdown.contains(e.target)) {
+        this.close();
+      }
+    });
+  },
+
+  /** Подключение SSE потока уведомлений */
+  _connectSSE() {
+    const token = API.getToken();
+    if (!token) return;
+
+    // Передаём токен через query param т.к. EventSource не поддерживает заголовки
+    const url = `/api/v1/notifications/stream?token=${encodeURIComponent(token)}`;
+
+    // Переподключаемся через стандартный механизм EventSource
+    this._source = new EventSource(`/api/v1/notifications/stream`);
+
+    this._source.onmessage = (event) => {
+      try {
+        const notifs = JSON.parse(event.data);
+        if (Array.isArray(notifs) && notifs.length > 0) {
+          this.refreshCount();
+          // Показываем toast для critical уведомлений
+          notifs.forEach(n => {
+            if (n.severity === 'critical') {
+              Toast.show(`\u{1F6A8} ${n.message}`, 'error', 8000);
+            }
+          });
+        }
+      } catch (_) { /* heartbeat или parse error — игнорируем */ }
+    };
+
+    this._source.onerror = () => {
+      // SSE переподключится автоматически — ничего не делаем
+    };
+  },
+
+  /** Обновляет счётчик непрочитанных на badge */
+  async refreshCount() {
+    try {
+      const res = await API.request('/api/v1/notifications/count');
+      if (!res || !res.ok) return;
+      const data = await res.json();
+      const count = data.unread || 0;
+      const badge = document.getElementById('notif-badge');
+      if (!badge) return;
+      if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.style.display = 'flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    } catch (_) { /* тихая ошибка */ }
+  },
+
+  /** Переключить dropdown */
+  async toggle() {
+    if (this._open) {
+      this.close();
+    } else {
+      await this.open();
+    }
+  },
+
+  /** Открыть dropdown и загрузить список */
+  async open() {
+    const dropdown = document.getElementById('notif-dropdown');
+    if (!dropdown) return;
+    dropdown.style.display = 'block';
+    this._open = true;
+    await this._loadList();
+  },
+
+  /** Закрыть dropdown */
+  close() {
+    const dropdown = document.getElementById('notif-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    this._open = false;
+  },
+
+  /** Загрузить и отрисовать список уведомлений */
+  async _loadList() {
+    const listEl = document.getElementById('notif-list');
+    if (!listEl) return;
+
+    listEl.innerHTML = '<div style="padding:1rem;text-align:center;color:var(--text-muted);font-size:.85rem">Загрузка…</div>';
+
+    try {
+      const res = await API.request('/api/v1/notifications');
+      if (!res || !res.ok) throw new Error('Ошибка загрузки');
+      const notifs = await res.json();
+
+      if (!notifs.length) {
+        listEl.innerHTML = '<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:.85rem">Нет уведомлений</div>';
+        return;
+      }
+
+      // Карта цветов по severity
+      const sevColor = { critical: '#ef4444', high: '#f97316', warning: '#eab308', info: '#64748b' };
+      const sevLabel = { critical: 'Критично', high: 'Высокий', warning: 'Предупреждение', info: 'Инфо' };
+
+      listEl.innerHTML = notifs.map(n => {
+        const color = sevColor[n.severity] || '#64748b';
+        const label = sevLabel[n.severity] || n.severity;
+        const time = n.created_at ? new Date(n.created_at).toLocaleString('ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+        const opacity = n.is_read ? '0.5' : '1';
+        return `
+          <div style="padding:.6rem 1rem;border-bottom:1px solid rgba(255,255,255,.06);
+                      opacity:${opacity};cursor:${n.is_read ? 'default' : 'pointer'};
+                      transition:background .1s"
+               onmouseover="this.style.background='rgba(255,255,255,.04)'"
+               onmouseout="this.style.background=''"
+               onclick="${n.is_read ? '' : `NotifHub.markRead('${n.id}')`}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem">
+              <div style="display:flex;align-items:baseline;gap:.4rem">
+                <span style="width:6px;height:6px;border-radius:50%;
+                             background:${color};flex-shrink:0;margin-top:5px;display:inline-block"></span>
+                <span style="font-size:.82rem;line-height:1.4">${n.message}</span>
+              </div>
+              <span style="font-size:.7rem;color:var(--text-muted);white-space:nowrap;flex-shrink:0">
+                ${time}
+              </span>
+            </div>
+            <div style="margin-left:1rem;font-size:.72rem;color:${color};margin-top:2px">
+              ${label}
+            </div>
+          </div>`;
+      }).join('');
+    } catch (err) {
+      listEl.innerHTML = `<div style="padding:1rem;text-align:center;color:var(--text-muted);font-size:.85rem">Ошибка загрузки</div>`;
+    }
+  },
+
+  /** Пометить одно уведомление прочитанным */
+  async markRead(id) {
+    try {
+      await API.request(`/api/v1/notifications/${id}/read`, { method: 'POST' });
+      await this.refreshCount();
+      await this._loadList();
+    } catch (_) { /* игнорируем */ }
+  },
+
+  /** Пометить все уведомления прочитанными */
+  async markAllRead() {
+    try {
+      await API.request('/api/v1/notifications/read-all', { method: 'POST' });
+      await this.refreshCount();
+      await this._loadList();
+    } catch (_) { /* игнорируем */ }
+  },
+};
+
+
+// ─────────────────────────────────────────────
+// 10.F — API Keys (SIEM/SOAR интеграция)
+// ─────────────────────────────────────────────
+
+const ApiKeys = {
+  /** Открывает вкладку и загружает ключи */
+  async load() {
+    const container = document.getElementById('api-keys-container');
+    const noEnterprise = document.getElementById('api-keys-no-enterprise');
+    const createBtn = document.getElementById('create-api-key-btn');
+
+    if (!container) return;
+
+    try {
+      const res = await API.request('/api/v1/auth/api-keys');
+
+      if (res && res.status === 403) {
+        // Нет доступа — не Enterprise
+        if (noEnterprise) noEnterprise.style.display = 'block';
+        if (container) container.style.display = 'none';
+        if (createBtn) createBtn.style.display = 'none';
+        return;
+      }
+
+      if (!res || !res.ok) throw new Error('Ошибка загрузки');
+
+      const keys = await res.json();
+      if (noEnterprise) noEnterprise.style.display = 'none';
+      if (container) container.style.display = 'block';
+      if (createBtn) createBtn.style.display = 'flex';
+
+      this._render(keys);
+    } catch (err) {
+      if (container) container.innerHTML = `<p style="color:var(--text-muted);padding:1rem 0">Ошибка загрузки</p>`;
+    }
+  },
+
+  /** Отрисовывает список ключей */
+  _render(keys) {
+    const listEl = document.getElementById('api-keys-list');
+    if (!listEl) return;
+
+    if (!keys.length) {
+      listEl.innerHTML = '<p style="color:var(--text-muted);padding:1rem 0;font-size:.875rem">API ключей нет. Создайте первый.</p>';
+      return;
+    }
+
+    listEl.innerHTML = keys.map(k => {
+      const created = new Date(k.created_at).toLocaleDateString('ru-RU');
+      const lastUsed = k.last_used_at
+        ? new Date(k.last_used_at).toLocaleDateString('ru-RU')
+        : 'Никогда';
+      const status = k.is_active
+        ? '<span style="color:#22c55e;font-size:.75rem">● Активен</span>'
+        : '<span style="color:#ef4444;font-size:.75rem">● Отозван</span>';
+
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:.75rem 1rem;background:var(--surface-2,#1e1e2e);
+                    border-radius:8px;border:1px solid rgba(255,255,255,.08)">
+          <div>
+            <div style="font-weight:600;font-size:.9rem;margin-bottom:.2rem">
+              ${escHtml(k.name)} ${status}
+            </div>
+            <div style="font-size:.75rem;color:var(--text-muted)">
+              Создан: ${created} · Последнее использование: ${lastUsed}
+            </div>
+            <div style="font-size:.72rem;color:var(--text-muted);margin-top:.15rem">
+              Разрешения: ${(k.permissions || []).join(', ') || 'нет'}
+            </div>
+          </div>
+          ${k.is_active ? `
+            <button class="btn btn-secondary btn-sm"
+                    onclick="ApiKeys.revoke('${k.id}')"
+                    style="color:#f87171;border-color:rgba(239,68,68,.3)"
+                    title="Отозвать ключ">
+              Отозвать
+            </button>` : ''}
+        </div>`;
+    }).join('');
+  },
+
+  /** Открывает модал создания ключа */
+  create() {
+    Modal.open('create-api-key-modal');
+  },
+
+  /** Отправляет запрос на создание ключа */
+  async submitCreate() {
+    const name = document.getElementById('new-key-name')?.value?.trim();
+    if (!name) {
+      Toast.show('Укажите название ключа', 'error');
+      return;
+    }
+
+    const permissions = [];
+    if (document.getElementById('perm-events-read')?.checked) permissions.push('events:read');
+    if (document.getElementById('perm-assets-read')?.checked) permissions.push('assets:read');
+    if (document.getElementById('perm-ingest-write')?.checked) permissions.push('ingest:write');
+
+    const btn = document.getElementById('create-key-submit');
+    if (btn) { btn.disabled = true; btn.textContent = 'Создание…'; }
+
+    try {
+      const res = await API.request('/api/v1/auth/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({ name, permissions }),
+      });
+
+      if (!res || !res.ok) {
+        const err = await res?.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res?.status}`);
+      }
+
+      const data = await res.json();
+      Modal.close('create-api-key-modal');
+
+      // Показываем модал с raw_key
+      const keyInput = document.getElementById('api-key-value');
+      const permsEl = document.getElementById('api-key-perms');
+      if (keyInput) keyInput.value = data.key;
+      if (permsEl) permsEl.textContent = (data.permissions || []).join(', ');
+      Modal.open('api-key-created-modal');
+
+      // Перезагружаем список
+      await this.load();
+
+    } catch (err) {
+      Toast.show(err.message || 'Ошибка создания ключа', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Создать'; }
+    }
+  },
+
+  /** Отзывает ключ */
+  async revoke(keyId) {
+    if (!confirm('Отозвать API ключ? Это действие необратимо.')) return;
+
+    try {
+      const res = await API.request(`/api/v1/auth/api-keys/${keyId}`, { method: 'DELETE' });
+      if (!res || !res.ok) throw new Error('Ошибка');
+      Toast.show('Ключ отозван', 'info');
+      await this.load();
+    } catch (err) {
+      Toast.show('Ошибка отзыва ключа', 'error');
+    }
+  },
+
+  /** Копирует raw_key в буфер обмена */
+  copyKey() {
+    const val = document.getElementById('api-key-value')?.value;
+    if (val) {
+      navigator.clipboard?.writeText(val).then(() => Toast.show('Ключ скопирован', 'info'));
+    }
+  },
+};
+
 
 // Старт после загрузки DOM
 if (document.readyState === 'loading') {

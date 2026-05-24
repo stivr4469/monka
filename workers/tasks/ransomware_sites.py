@@ -520,3 +520,41 @@ def _send_ingest_event(
     except Exception as exc:
         logger.error("[ransomware_sites] Ошибка отправки в Core API: %s", exc)
         return False
+
+
+def run_darknet_monitor_all_assets() -> None:
+    """
+    10.H: Celery Beat задача — мониторинг ransomware-сайтов для всех активных активов.
+
+    Запрашивает список активов через Core API и проверяет каждый на упоминание
+    в известных ransomware-сайтах даркнета.
+    Запускается каждый час через Beat расписание.
+    """
+    import os
+
+    import httpx
+
+    core_url = os.environ.get("CORE_API_URL", "http://core:8000")
+    internal_secret = os.environ.get("INTERNAL_API_SECRET", "")
+
+    try:
+        resp = httpx.get(
+            f"{core_url}/api/v1/assets/",
+            headers={"Authorization": f"Bearer {internal_secret}"},
+            timeout=10,
+        )
+        assets = resp.json() if resp.is_success else []
+        logger.info("[beat] darknet-monitor-all: запускаем для %d активов", len(assets))
+        for asset in assets:
+            domain = asset.get("domain") if isinstance(asset, dict) else None
+            if domain:
+                try:
+                    monitor_ransomware_sites(
+                        domain=domain,
+                        core_api_url=core_url,
+                        internal_secret=internal_secret,
+                    )
+                except Exception as exc:
+                    logger.warning("[beat] darknet-monitor-all: ошибка для %s: %s", domain, exc)
+    except Exception as exc:
+        logger.warning("[beat] darknet-monitor-all: ошибка получения активов: %s", exc)

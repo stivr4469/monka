@@ -43,6 +43,52 @@
       <span>Обновление через <span id="refresh-count">30</span>с</span>
     </div>
 
+    <!-- 10.I: Колокольчик уведомлений -->
+    <div style="position:relative">
+      <button id="notif-bell"
+              style="background:none;border:none;cursor:pointer;padding:4px 6px;
+                     border-radius:6px;color:var(--text-2);font-size:1.1rem;
+                     display:flex;align-items:center;line-height:1;
+                     transition:background .15s"
+              onclick="NotifHub.toggle()"
+              title="Уведомления"
+              aria-label="Уведомления">
+        🔔
+        <span id="notif-badge"
+              style="display:none;position:absolute;top:-2px;right:-4px;
+                     background:#ef4444;color:#fff;border-radius:50%;
+                     width:16px;height:16px;font-size:10px;font-weight:700;
+                     align-items:center;justify-content:center;line-height:1">
+          0
+        </span>
+      </button>
+      <!-- Dropdown с уведомлениями -->
+      <div id="notif-dropdown"
+           style="display:none;position:absolute;top:calc(100% + 8px);right:0;
+                  width:360px;max-height:440px;overflow-y:auto;
+                  background:var(--surface-2,#1e1e2e);
+                  border:1px solid rgba(255,255,255,.1);
+                  border-radius:10px;z-index:200;
+                  box-shadow:0 8px 32px rgba(0,0,0,.4)">
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:.75rem 1rem;border-bottom:1px solid rgba(255,255,255,.08)">
+          <span style="font-weight:600;font-size:.9rem">Уведомления</span>
+          <button onclick="NotifHub.markAllRead()"
+                  style="background:none;border:none;cursor:pointer;
+                         font-size:.75rem;color:var(--text-muted);padding:2px 6px;
+                         border-radius:4px;transition:background .15s"
+                  title="Отметить все прочитанными">
+            Прочитать все
+          </button>
+        </div>
+        <div id="notif-list" style="padding:.5rem 0">
+          <div style="padding:1rem;text-align:center;color:var(--text-muted);font-size:.85rem">
+            Нет уведомлений
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Переключатель темы -->
     <button class="theme-toggle" id="theme-toggle-btn"
             onclick="Theme.toggle()" title="Переключить тему" aria-label="Переключить тему">
@@ -131,6 +177,15 @@
     </svg>
     Attack Graph
   </button>
+  <!-- Вкладка API Keys — SIEM/SOAR (задача 10.F) — показывается только Enterprise/superuser -->
+  <button class="nav-tab" data-tab="api-keys" id="api-keys-nav-tab" style="display:none">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="6" cy="10" r="3.5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M9 7l5-5M12 2l2 2M10 4l2 2" stroke="currentColor" stroke-width="1.3"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    API Keys
+  </button>
   <!-- Вкладка Human OSINT — Сотрудники (задача 9.D) -->
   <button class="nav-tab" data-tab="employees">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -140,6 +195,30 @@
       <path d="M10 14c0-2 .9-3 2-3s2 1 2 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
     </svg>
     Сотрудники
+  </button>
+  <!-- Вкладка Technology Profiling (задача 10.A) -->
+  <button class="nav-tab" data-tab="tech">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M5 7l2 2-2 2M9 11h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Технологии
+  </button>
+  <!-- Вкладка Asset Map (задача 10.E) -->
+  <button class="nav-tab" data-tab="map">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M6 2L2 4v8l4-2 4 2 4-2V2l-4 2-4-2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      <path d="M6 2v8M10 4v8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+    </svg>
+    Map
+  </button>
+  <!-- Вкладка Аудит — только для superuser (задача 10.B) -->
+  <button class="nav-tab" data-tab="audit" id="audit-nav-tab" style="display:none">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="1" width="12" height="14" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M5 5h6M5 8h6M5 11h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    </svg>
+    Аудит
   </button>
 </nav>
 
@@ -173,19 +252,22 @@
       </div>
     </div>
 
-    <!-- Risk Score виджет -->
+    <!-- Risk Score виджет — 10.C: SVG Gauge заменяет текстовый индикатор -->
     <div class="risk-score-widget" id="risk-score-widget">
-      <div class="risk-dial" aria-label="Оценка риска">
-        <svg viewBox="0 0 80 80" aria-hidden="true">
-          <!-- Трек (фон) -->
-          <circle class="risk-dial-track" cx="40" cy="40" r="32"/>
-          <!-- Заполненная дуга -->
-          <circle class="risk-dial-fill" cx="40" cy="40" r="32"/>
+      <!-- 10.C: Контейнер SVG gauge (анимированная дуга 270°) -->
+      <div id="risk-score-gauge" class="risk-gauge-container" aria-label="Оценка риска">
+        <!-- SVG gauge генерируется через _buildGaugeSvg() в app.js -->
+        <svg viewBox="0 0 140 140" width="160" height="160" role="img" aria-label="Risk Score: загрузка">
+          <circle cx="70" cy="70" r="54"
+            fill="none" stroke="rgba(255,255,255,.08)" stroke-width="12"
+            stroke-dasharray="254.47 84.82"
+            stroke-linecap="round"
+            transform="rotate(135 70 70)"/>
+          <text x="70" y="78" text-anchor="middle"
+            fill="var(--text-muted)" font-size="28" font-weight="700">—</text>
+          <text x="70" y="96" text-anchor="middle"
+            fill="var(--text-muted)" font-size="10" font-weight="600" letter-spacing="1">LOADING</text>
         </svg>
-        <div class="risk-dial-label">
-          <span class="risk-dial-value" style="color:var(--text-muted)">—</span>
-          <span class="risk-dial-unit">риск</span>
-        </div>
       </div>
       <div class="risk-score-info">
         <div class="risk-score-title">Risk Score</div>
@@ -324,6 +406,14 @@
           <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
         Сбросить
+      </button>
+      <!-- 10.D: Экспорт событий в CSV с текущими фильтрами -->
+      <button class="btn btn-secondary btn-sm" onclick="exportEventsCSV()" title="Скачать события в CSV">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 1v7M3 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M1 9v1.5A.5.5 0 0 0 1.5 11h9a.5.5 0 0 0 .5-.5V9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+        CSV
       </button>
     </div>
 
@@ -726,6 +816,12 @@
                 title="Human OSINT: профили сотрудников из GitHub и LinkedIn (DDG). VIP-персоны подсвечиваются как цели фишинга.">
           👤 Human OSINT
         </button>
+        <button class="btn btn-secondary" id="tech-scan-btn"
+                onclick="handleTechScan()"
+                style="flex:1;min-width:160px;justify-content:center"
+                title="Technology Profiling: определить CMS, фреймворки, серверы, CDN. Версии проверяются на End-of-Life.">
+          ⚙️ Tech Scan
+        </button>
       </div>
       <div id="darknet-scan-status" style="margin-top:.75rem;display:none"></div>
       <div id="cookie-scan-status" style="margin-top:.75rem;display:none"></div>
@@ -1016,6 +1112,90 @@
     </div>
   </div>
 
+  <!-- ══════ TAB: Asset Map — Карта инфраструктуры (задача 10.E) ══════ -->
+  <div class="tab-pane" id="tab-map" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Asset Map — Карта инфраструктуры</div>
+        <div class="section-subtitle">
+          Интерактивное дерево: домен → поддомены → IP → открытые порты → технологии
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="loadAssetMapForCurrentAsset()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M1.5 1.5V6h4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Обновить
+      </button>
+    </div>
+
+    <!-- Выбор актива -->
+    <div class="scan-form-card" style="max-width:480px;margin-bottom:1.25rem">
+      <div class="form-group" style="margin-bottom:0">
+        <label for="map-asset-select">Актив для отображения</label>
+        <div style="display:flex;gap:.5rem">
+          <select id="map-asset-select" style="flex:1" onchange="loadAssetMapById(this.value)">
+            <option value="">— выберите актив —</option>
+          </select>
+          <button class="btn btn-primary" onclick="loadAssetMapById(document.getElementById('map-asset-select').value)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M6 2L2 4v8l4-2 4 2 4-2V2l-4 2-4-2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            </svg>
+            Показать
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Дерево инфраструктуры -->
+    <div id="asset-map-tree">
+      <div style="text-align:center;padding:3rem;color:var(--text-muted)">
+        Выберите актив для отображения карты инфраструктуры
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: API Keys — SIEM/SOAR интеграция (задача 10.F) ══════ -->
+  <div class="tab-pane" id="tab-api-keys" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">API Keys</div>
+        <div class="section-subtitle">
+          Долгосрочные ключи для SIEM/SOAR интеграции.
+          Доступно только на Enterprise-плане.
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="ApiKeys.create()"
+              id="create-api-key-btn" style="display:none">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <path d="M6.5 1.5v11M1.5 6.5h11" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        Создать ключ
+      </button>
+    </div>
+
+    <!-- Заглушка для не-Enterprise -->
+    <div id="api-keys-no-enterprise"
+         style="display:none;padding:2rem;text-align:center;color:var(--text-muted)">
+      <div style="font-size:2rem;margin-bottom:.75rem">🔐</div>
+      <div style="font-weight:600;margin-bottom:.5rem">Enterprise Feature</div>
+      <div style="font-size:.85rem">
+        API Keys доступны только на Enterprise-плане.
+        Для обновления — обратитесь к менеджеру.
+      </div>
+    </div>
+
+    <!-- Список ключей -->
+    <div id="api-keys-container" style="display:none">
+      <div id="api-keys-list" style="display:flex;flex-direction:column;gap:.5rem;margin-top:1rem">
+        <div class="loading-skeleton skeleton-line" style="height:60px"></div>
+        <div class="loading-skeleton skeleton-line" style="height:60px;width:80%"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════ TAB: Сотрудники — Human OSINT (задача 9.D) ══════ -->
   <div class="tab-pane" id="tab-employees" role="tabpanel">
     <div class="section-header">
@@ -1044,6 +1224,92 @@
 
     <!-- Список профилей -->
     <div id="employees-list"></div>
+  </div>
+
+  <!-- ══════ TAB: Технологии (задача 10.A) ══════ -->
+  <div class="tab-pane" id="tab-tech" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Technology Profiling</div>
+        <div class="section-subtitle">
+          Wappalyzer-like детектирование: CMS, фреймворки, серверы, CDN, DevOps-инструменты.
+          Версии проверяются на End-of-Life — устаревшие подсвечены красным.
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="loadTechnologies()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M1.5 1.5V6h4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Обновить
+      </button>
+    </div>
+
+    <!-- Подсказка если нет данных -->
+    <div id="tech-no-domain" style="display:none">
+      <p class="hint" style="padding:1rem 0">
+        Выберите домен на вкладке Darknet и нажмите <strong>⚙️ Tech Scan</strong>.
+      </p>
+    </div>
+
+    <!-- Таблица технологий -->
+    <div class="table-wrapper" id="tech-table-wrapper">
+      <table class="tech-table">
+        <thead>
+          <tr>
+            <th>Технология</th>
+            <th>Версия</th>
+            <th>Домен</th>
+            <th>Статус</th>
+            <th>Время</th>
+          </tr>
+        </thead>
+        <tbody id="tech-tbody">
+          <tr>
+            <td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+              <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: Аудит (задача 10.B) — только для superuser ══════ -->
+  <div class="tab-pane" id="tab-audit" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Аудит расшифровок паролей</div>
+        <div class="section-subtitle">
+          Журнал всех обращений к функции reveal_password. Доступно только superuser.
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="loadAuditLogs()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M1.5 1.5V6h4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Обновить
+      </button>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Пользователь</th>
+            <th>Действие</th>
+            <th>Цель (Event ID)</th>
+            <th>IP-адрес</th>
+            <th>Время</th>
+          </tr>
+        </thead>
+        <tbody id="audit-logs-tbody">
+          <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+            <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
 </main>
@@ -1086,6 +1352,145 @@
           <path d="M6.5 1.5v11M1.5 6.5h11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
         </svg>
         Добавить
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ MODAL: Reveal Password (задача 10.B) ═══════ -->
+<div class="modal-backdrop" id="reveal-modal" role="dialog"
+     aria-modal="true" aria-labelledby="reveal-modal-title" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <span class="modal-title" id="reveal-modal-title">
+        🔓 Расшифрованный пароль
+      </span>
+      <button class="btn btn-icon" onclick="closeRevealModal()" aria-label="Закрыть">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:.75rem">
+      <div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:.25rem">URL</div>
+        <div id="reveal-url" style="font-family:var(--font-mono);font-size:.875rem;word-break:break-all">—</div>
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:.25rem">Логин</div>
+        <div id="reveal-login" style="font-family:var(--font-mono);font-size:.875rem">—</div>
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:var(--text-muted);margin-bottom:.25rem">Пароль</div>
+        <div id="reveal-password"
+             style="font-family:var(--font-mono);font-size:1rem;font-weight:700;color:var(--sev-critical);letter-spacing:.05em">—</div>
+      </div>
+      <!-- Таймер самоуничтожения: 30 секунд -->
+      <div style="font-size:.75rem;color:var(--text-muted);display:flex;align-items:center;gap:.5rem">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M6 3.5V6l2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+        Пароль скроется через <strong id="reveal-countdown" style="color:var(--sev-high)">30</strong>&nbsp;с
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeRevealModal()">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ MODAL: Новый API ключ (10.F) ═══════ -->
+<div class="modal-backdrop" id="api-key-created-modal" role="dialog"
+     aria-modal="true" aria-labelledby="api-key-modal-title" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="api-key-modal-title">Новый API ключ создан</span>
+      <button class="btn btn-icon" onclick="Modal.close('api-key-created-modal')"
+              aria-label="Закрыть">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 2l10 10M12 2L2 12" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.4);
+                  border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;
+                  color:#f87171;font-size:.85rem">
+        ⚠️ Сохраните ключ сейчас — он показывается только один раз!
+      </div>
+      <div class="form-group">
+        <label>API ключ</label>
+        <div style="display:flex;gap:.5rem">
+          <input type="text" id="api-key-value" readonly
+                 style="font-family:monospace;font-size:.8rem;cursor:text"
+                 onclick="this.select()">
+          <button class="btn btn-secondary btn-sm" onclick="ApiKeys.copyKey()"
+                  title="Скопировать">
+            📋
+          </button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Разрешения</label>
+        <div id="api-key-perms" style="font-size:.8rem;color:var(--text-muted)"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="Modal.close('api-key-created-modal')">
+        Сохранил, закрыть
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ MODAL: Создать API ключ (10.F) ═══════ -->
+<div class="modal-backdrop" id="create-api-key-modal" role="dialog"
+     aria-modal="true" aria-labelledby="create-key-title" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="create-key-title">Создать API ключ</span>
+      <button class="btn btn-icon" onclick="Modal.close('create-api-key-modal')"
+              aria-label="Закрыть">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 2l10 10M12 2L2 12" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="new-key-name">
+          Название <span style="color:var(--sev-critical)">*</span>
+        </label>
+        <input type="text" id="new-key-name"
+               placeholder="Splunk SIEM Integration" autocomplete="off" required>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Разрешения</label>
+        <div style="display:flex;flex-direction:column;gap:.4rem;margin-top:.25rem">
+          <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem">
+            <input type="checkbox" id="perm-events-read" checked> events:read
+          </label>
+          <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem">
+            <input type="checkbox" id="perm-assets-read" checked> assets:read
+          </label>
+          <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem">
+            <input type="checkbox" id="perm-ingest-write"> ingest:write
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="Modal.close('create-api-key-modal')">Отмена</button>
+      <button class="btn btn-primary" id="create-key-submit"
+              onclick="ApiKeys.submitCreate()">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <path d="M6.5 1.5v11M1.5 6.5h11" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        Создать
       </button>
     </div>
   </div>

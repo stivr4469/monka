@@ -20,6 +20,11 @@ app = Celery(
         "workers.tasks.gitleaks",
         "workers.tasks.github_search",
         "workers.tasks.stealer_parser",
+        # 10.H: Новые Beat задачи
+        "workers.tasks.port_scanner",
+        "workers.tasks.tech_profiler",
+        "workers.tasks.ransomware_sites",
+        "workers.tasks.telegram_monitor",
     ],
 )
 
@@ -80,6 +85,30 @@ app.conf.update(
             "task": "workers.tasks.nuclei.scan_all_active_targets",
             "schedule": crontab(hour=3, minute=0),  # каждый день в 03:00 UTC
             "options": {"queue": "scanning"},
+        },
+        # 10.H: Сканирование портов всех активов — ежедневно в 04:00 UTC
+        "port-scan-all-daily": {
+            "task": "workers.tasks.port_scanner.run_port_scan_all_assets",
+            "schedule": crontab(hour=4, minute=0),
+            "options": {"queue": "scanning"},
+        },
+        # 10.H: Профилирование технологий — ежедневно в 05:00 UTC
+        "tech-profile-all-daily": {
+            "task": "workers.tasks.tech_profiler.run_tech_profiler_all_assets",
+            "schedule": crontab(hour=5, minute=0),
+            "options": {"queue": "scanning"},
+        },
+        # 10.H: Мониторинг ransomware-сайтов даркнета — каждый час
+        "darknet-ransomware-hourly": {
+            "task": "workers.tasks.ransomware_sites.run_darknet_monitor_all_assets",
+            "schedule": crontab(minute=0),
+            "options": {"queue": "osint"},
+        },
+        # 10.H: Мониторинг Telegram — каждые 15 минут
+        "telegram-monitor-15min": {
+            "task": "workers.tasks.telegram_monitor.run_telegram_monitor_all_assets",
+            "schedule": crontab(minute="*/15"),
+            "options": {"queue": "osint"},
         },
     },
 

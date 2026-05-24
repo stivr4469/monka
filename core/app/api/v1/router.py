@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     alerts,
+    api_keys,
     assets,
     auth,
     billing,
@@ -17,14 +18,17 @@ from app.api.v1.endpoints import (
     ingest,
     internal_alerts,
     mssp,
+    notifications,
     paste_scan,
     phishing_scan,
     port_scan,
+    reveal,
     s3_scan,
     scheduled_scan,
     stealer,
     stealer_sources,
     takeover_scan,
+    tech_scan,
     telegram_scan,
     tls_scan,
 )
@@ -82,4 +86,16 @@ api_router.include_router(enrich_scan.router)
 
 # Human OSINT — профилирование сотрудников компании (задача 9.D)
 api_router.include_router(human_osint_scan.router)
+
+# Technology Profiling — Wappalyzer-like детектирование (задача 10.A)
+api_router.include_router(tech_scan.router)
+
+# Reveal (расшифровка паролей) + Audit Log (задача 10.B)
+api_router.include_router(reveal.router)
+
+# API Keys — SIEM/SOAR интеграция (задача 10.F)
+api_router.include_router(api_keys.router)
+
+# Уведомления + SSE поток (задача 10.I)
+api_router.include_router(notifications.router)
 

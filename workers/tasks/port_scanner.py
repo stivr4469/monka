@@ -298,6 +298,43 @@ def run_port_scan(
     }
 
 
+def run_port_scan_all_assets() -> None:
+    """
+    10.H: Celery Beat задача — сканирование портов всех активных активов.
+
+    Запрашивает список активов через Core API и запускает сканирование каждого.
+    Используется как stub для Beat расписания — реальная логика через run_port_scan().
+    """
+    import os
+
+    import httpx
+
+    core_url = os.environ.get("CORE_API_URL", "http://core:8000")
+    internal_secret = os.environ.get("INTERNAL_API_SECRET", "")
+
+    try:
+        resp = httpx.get(
+            f"{core_url}/api/v1/assets/",
+            headers={"Authorization": f"Bearer {internal_secret}"},
+            timeout=10,
+        )
+        assets = resp.json() if resp.is_success else []
+        logger.info("[beat] port-scan-all: запускаем для %d активов", len(assets))
+        for asset in assets:
+            domain = asset.get("domain") if isinstance(asset, dict) else None
+            if domain:
+                try:
+                    run_port_scan(
+                        domain=domain,
+                        core_api_url=core_url,
+                        internal_secret=internal_secret,
+                    )
+                except Exception as exc:
+                    logger.warning("[beat] port-scan-all: ошибка для %s: %s", domain, exc)
+    except Exception as exc:
+        logger.warning("[beat] port-scan-all: ошибка получения активов: %s", exc)
+
+
 def _send_nmap_unavailable(
     domain: str,
     core_api_url: str,

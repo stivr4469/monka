@@ -187,6 +187,7 @@ async def export_events(
     domain: str | None = Query(default=None, description="Фильтр по домену"),
     severity: str | None = Query(default=None, description="Фильтр по severity"),
     event_type: str | None = Query(default=None, description="Фильтр по типу события"),
+    asset_id: str | None = Query(default=None, description="10.D: Фильтр по asset_id"),
     limit: int = Query(default=1000, ge=1, le=10000, description="Максимум записей для экспорта"),
 ) -> Response:
     """
@@ -215,6 +216,9 @@ async def export_events(
         q = q.where(Event.severity == severity)
     if event_type:
         q = q.where(Event.event_type == event_type)
+    # 10.D: дополнительный фильтр по конкретному активу
+    if asset_id:
+        q = q.where(Event.asset_id == asset_id)
 
     q = q.order_by(Event.detected_at.desc()).limit(limit)
     result = await db.execute(q)
@@ -228,7 +232,8 @@ async def export_events(
         # Формируем CSV в памяти
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["id", "event_type", "severity", "source_type", "source_name", "target_domain", "detected_at"])
+        # 10.D: добавлена колонка condition (условие устранения, задача 9.H.3)
+        writer.writerow(["id", "event_type", "severity", "source_type", "source_name", "target_domain", "detected_at", "condition"])
         for e in events:
             writer.writerow([
                 e.id,
@@ -238,6 +243,7 @@ async def export_events(
                 e.source_name,
                 e.target_domain,
                 e.detected_at.isoformat(),
+                e.condition or "",
             ])
         content = output.getvalue().encode("utf-8")
         filename = f"events_{domain_part}_{date_str}.csv"
