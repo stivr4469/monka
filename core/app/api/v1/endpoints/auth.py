@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Annotated
 
-from app.core.security import verify_password, create_access_token
+from app.core.rate_limit import limiter
+from app.core.security import create_access_token, verify_password
 from app.db import get_db
 from app.models.user import User
 from app.schemas.user import Token
@@ -13,7 +15,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/token", response_model=Token)
+@limiter.limit("10/minute")  # Защита от брутфорса: максимум 10 попыток в минуту с одного IP
 async def login_for_access_token(
+    request: Request,  # slowapi требует request в сигнатуре для извлечения IP
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Token:

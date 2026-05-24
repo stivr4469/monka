@@ -10,12 +10,8 @@ API расписания автоматических сканирований.
 """
 from __future__ import annotations
 
-import concurrent.futures
 import logging
-import os
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
@@ -26,18 +22,14 @@ from app.api.deps import CurrentUser, DBDep
 from app.core.config import settings
 from app.models.asset import Asset
 from app.models.scan_schedule import ScanFrequency, ScanSchedule
+from app.workers_client import ensure_workers_path, get_executor
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/schedule", tags=["schedule"])
 
-# Пул потоков для фоновых задач сканирования
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="scan_worker")
-
-# Добавляем workers в sys.path для импорта воркеров
-_workers_path = str(Path(__file__).parents[5] / "workers")
-if _workers_path not in sys.path:
-    sys.path.insert(0, _workers_path)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 
 # ─── Схемы запросов и ответов ────────────────────────────────────────────────
@@ -192,11 +184,12 @@ async def trigger_manual_scan(
     domain = asset.domain
 
     # Запускаем сканирование в фоне — не блокируем HTTP-запрос
+    # settings.APP_PORT — единственный правильный источник порта
     background_tasks.add_task(
-        _executor.submit,
+        get_executor().submit,
         _run_full_scan_background,
         domain,
-        port,
+        settings.APP_PORT,
     )
 
     logger.info("[schedule] Ручное сканирование запущено: asset=%s domain=%s", asset_id, domain)

@@ -8,12 +8,20 @@
      https://ransomwatch.telemetry.ltd/api/posts.json
      Это наиболее критичный источник: наличие домена здесь = активная атака
 
+Источники (требуют Tor или внешний API):
+  4. ransomware_sites — прямые .onion-сайты ransomware-группировок через Tor
+     Парсит LockBit, ALPHV/BlackCat, Play, Clop, RansomHub, Akira и др.
+     Если Tor недоступен — gracefully пропускается без ошибки
+  5. IntelX.io — поисковик по даркнету, пастам и архивам утечек
+     Публичный phonebook API (без ключа, лимит 5 результатов)
+
 Принципы:
   - Каждый источник изолирован try/except: сбой одного не прерывает остальные
   - RansomWatch кэшируется 1 час — он возвращает весь архив разом (~мегабайты)
   - Snippet обрезается до 500 символов согласно спецификации
-  - ransomwatch → severity "critical", остальные → "high"
+  - ransomwatch + ransomware_sites → severity "critical", остальные → "high"
   - Нормализация домена: strip + lower перед поиском
+  - Tor-источники: graceful degradation при недоступности Tor
 """
 import logging
 import re
@@ -21,6 +29,19 @@ import time
 from typing import Any
 
 import httpx
+
+# Новые источники мониторинга — импорт опциональный (graceful degradation)
+try:
+    from tasks.ransomware_sites import monitor_ransomware_sites as _monitor_ransomware_sites
+    _RANSOMWARE_SITES_AVAILABLE = True
+except ImportError:
+    _RANSOMWARE_SITES_AVAILABLE = False
+
+try:
+    from tasks.intelx_api import search_intelx as _search_intelx
+    _INTELX_AVAILABLE = True
+except ImportError:
+    _INTELX_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +373,8 @@ def monitor_darknet(
           "sources_checked": N,  — количество проверенных источников
           "found": M,            — суммарное количество найденных упоминаний
           "sent": K,             — успешно отправленных событий в Core API
-          "critical": C,         — из них критических (ransomwatch)
+          "critical": C,         — из них критических (ransomwatch + ransomware_sites)
+          "tor_skipped": bool,   — True если Tor-источники были пропущены
         }
     """
     domain = domain.strip().lower()
@@ -362,6 +384,7 @@ def monitor_darknet(
     ingest_headers: dict[str, str] = {"Authorization": f"Bearer {internal_secret}"}
 
     sources_checked = found = sent = critical = 0
+    tor_skipped = False
 
     # ── Источник 1: RansomWatch (критический) ─────────────────────────────────
     try:
@@ -446,15 +469,72 @@ def monitor_darknet(
     except Exception as exc:
         logger.error("[darknet][darksearch] Неожиданная ошибка: %s", exc)
 
+    # ── Источник 4: Ransomware Sites (через Tor, опциональный) ───────────────
+    if _RANSOMWARE_SITES_AVAILABLE:
+        try:
+            rw_sites_result = _monitor_ransomware_sites(
+                domain=domain,
+                core_api_url=core_api_url,
+                internal_secret=internal_secret,
+            )
+            sources_checked += 1
+
+            if rw_sites_result.get("tor_required"):
+                # Tor недоступен — graceful degradation, не считаем ошибкой
+                tor_skipped = True
+                logger.info("[darknet][ransomware_sites] Tor недоступен, источник пропущен")
+            else:
+                group_found = rw_sites_result.get("found", 0)
+                group_sent = rw_sites_result.get("sent", 0)
+                found += group_found
+                sent += group_sent
+                critical += group_sent  # ransomware_sites → severity critical
+                logger.info(
+                    "[darknet][ransomware_sites] domain=%s found=%d sent=%d",
+                    domain, group_found, group_sent,
+                )
+
+        except Exception as exc:
+            logger.error("[darknet][ransomware_sites] Неожиданная ошибка: %s", exc)
+    else:
+        logger.debug("[darknet][ransomware_sites] Модуль недоступен (ImportError)")
+
+    # ── Источник 5: IntelX.io (clearnet, всегда доступен) ────────────────────
+    if _INTELX_AVAILABLE:
+        try:
+            intelx_result = _search_intelx(
+                domain=domain,
+                core_api_url=core_api_url,
+                internal_secret=internal_secret,
+                # api_key=None — используем публичный phonebook-режим
+                # При наличии ключа в конфиге передавать сюда
+            )
+            sources_checked += 1
+
+            ix_found = intelx_result.get("found", 0)
+            ix_sent = intelx_result.get("sent", 0)
+            found += ix_found
+            sent += ix_sent
+            logger.info(
+                "[darknet][intelx] domain=%s found=%d sent=%d mode=%s",
+                domain, ix_found, ix_sent, intelx_result.get("mode", "?"),
+            )
+
+        except Exception as exc:
+            logger.error("[darknet][intelx] Неожиданная ошибка: %s", exc)
+    else:
+        logger.debug("[darknet][intelx] Модуль недоступен (ImportError)")
+
     logger.info(
-        "[darknet] Итого domain=%s sources=%d found=%d sent=%d critical=%d",
-        domain, sources_checked, found, sent, critical,
+        "[darknet] Итого domain=%s sources=%d found=%d sent=%d critical=%d tor_skipped=%s",
+        domain, sources_checked, found, sent, critical, tor_skipped,
     )
     return {
         "sources_checked": sources_checked,
         "found": found,
         "sent": sent,
         "critical": critical,
+        "tor_skipped": tor_skipped,
     }
 
 

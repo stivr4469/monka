@@ -1,17 +1,16 @@
-import concurrent.futures
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, DBDep
 from app.models.asset import Asset
+from app.models.event import Event
 from app.scanner import run_subfinder
 from app.schemas.asset import AssetCreate, AssetRead, AssetUpdate
 
 router = APIRouter(prefix="/assets", tags=["assets"])
-
-# ThreadPoolExecutor живёт на уровне модуля — переиспользуется между запросами
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
 @router.get("/", response_model=list[AssetRead])
@@ -91,3 +90,122 @@ async def delete_asset(asset_id: str, db: DBDep, current_user: CurrentUser) -> N
 
     await db.delete(asset)
     await db.commit()
+
+
+# ─── Схема Risk Score ─────────────────────────────────────────────────────────
+
+class RiskBreakdown(BaseModel):
+    """Детализация вклада каждого уровня severity в итоговый score."""
+    critical_events: int
+    high_events: int
+    medium_events: int
+    critical_score: int
+    high_score: int
+    medium_score: int
+
+
+class RiskScoreResponse(BaseModel):
+    """Ответ эндпоинта risk-score."""
+    asset_id: str
+    domain: str
+    score: int               # 0–100
+    level: str               # critical | high | medium | low
+    breakdown: RiskBreakdown
+    window_days: int         # за сколько дней считался score (всегда 30)
+
+
+# Константы начисления очков риска
+_CRITICAL_POINTS: int = 25   # max 4 события × 25 = 100
+_CRITICAL_MAX: int = 4
+_HIGH_POINTS: int = 10        # max 3 события × 10 = 30
+_HIGH_MAX: int = 3
+_MEDIUM_POINTS: int = 5       # max 2 события × 5 = 10
+_MEDIUM_MAX: int = 2
+
+_WINDOW_DAYS: int = 30
+
+
+def _severity_to_level(score: int) -> str:
+    """Переводит числовой score в текстовый уровень риска."""
+    if score >= 75:
+        return "critical"
+    if score >= 40:
+        return "high"
+    if score >= 15:
+        return "medium"
+    return "low"
+
+
+@router.get(
+    "/{asset_id}/risk-score",
+    response_model=RiskScoreResponse,
+    summary="Risk Score актива за 30 дней",
+)
+async def get_risk_score(
+    asset_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> RiskScoreResponse:
+    """
+    Вычисляет Risk Score актива на основе событий за последние 30 дней.
+
+    Формула:
+      critical: +25 очков за событие, максимум 4 (≤ 100 от critical)
+      high:     +10 очков за событие, максимум 3 (≤ 30 от high)
+      medium:   +5  очков за событие, максимум 2 (≤ 10 от medium)
+    Итоговый score зажат в [0, 100].
+
+    Уровни:
+      75–100 → critical
+      40–74  → high
+      15–39  → medium
+      0–14   → low
+    """
+    # Проверяем принадлежность актива организации пользователя
+    asset_result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    asset = asset_result.scalar_one_or_none()
+
+    if asset is None or asset.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Актив не найден")
+
+    # Окно: последние 30 дней
+    since = datetime.now(timezone.utc) - timedelta(days=_WINDOW_DAYS)
+
+    # Считаем события по каждому уровню severity одним запросом
+    counts_result = await db.execute(
+        select(Event.severity, func.count().label("cnt"))
+        .where(
+            Event.asset_id == asset_id,
+            Event.detected_at >= since,
+            Event.severity.in_(["critical", "high", "medium"]),
+        )
+        .group_by(Event.severity)
+    )
+    counts: dict[str, int] = {row.severity: row.cnt for row in counts_result.all()}
+
+    critical_cnt = counts.get("critical", 0)
+    high_cnt = counts.get("high", 0)
+    medium_cnt = counts.get("medium", 0)
+
+    # Начисляем очки с учётом максимумов на каждый уровень
+    critical_score = min(critical_cnt, _CRITICAL_MAX) * _CRITICAL_POINTS
+    high_score = min(high_cnt, _HIGH_MAX) * _HIGH_POINTS
+    medium_score = min(medium_cnt, _MEDIUM_MAX) * _MEDIUM_POINTS
+
+    total_score = min(critical_score + high_score + medium_score, 100)
+
+    return RiskScoreResponse(
+        asset_id=asset_id,
+        domain=asset.domain,
+        score=total_score,
+        level=_severity_to_level(total_score),
+        breakdown=RiskBreakdown(
+            critical_events=critical_cnt,
+            high_events=high_cnt,
+            medium_events=medium_cnt,
+            critical_score=critical_score,
+            high_score=high_score,
+            medium_score=medium_score,
+        ),
+        window_days=_WINDOW_DAYS,
+    )

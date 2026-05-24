@@ -2,27 +2,20 @@
 Эндпоинт загрузки стилер-логов.
 Принимает ZIP-архив или TXT-файл, запускает парсер в фоне.
 """
-import concurrent.futures
-import sys
-import os
-from pathlib import Path
-
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DBDep
 from app.core.config import settings
-from sqlalchemy import select
+from app.core.rate_limit import limiter
 from app.models.asset import Asset
+from app.workers_client import ensure_workers_path, get_executor
 
 router = APIRouter(prefix="/stealer", tags=["stealer-logs"])
 
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-
-# Импортируем парсер из workers (доступен в монорепо)
-_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
-if _WORKERS_PATH not in sys.path:
-    sys.path.insert(0, _WORKERS_PATH)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.stealer_parser import parse_stealer_log
@@ -43,7 +36,9 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 МБ
 
 
 @router.post("/upload", response_model=StealerUploadResponse, status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("5/minute")  # Загрузка файлов — дорогая операция, ограничиваем до 5 в минуту с IP
 async def upload_stealer_log(
+    request: Request,  # slowapi требует request для извлечения IP
     db: DBDep,
     current_user: CurrentUser,
     file: UploadFile = File(...),
@@ -87,7 +82,7 @@ async def upload_stealer_log(
     # Запускаем парсинг в фоне
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    _executor.submit(
+    get_executor().submit(
         parse_stealer_log,
         file_bytes,
         filename,

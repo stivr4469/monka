@@ -2,13 +2,17 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.security import hash_password
 from app.db import AsyncSessionLocal, engine
 from app.middleware.logging_middleware import LoggingMiddleware
@@ -57,11 +61,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Подключаем slowapi: state хранит limiter, обработчик отдаёт 429 Too Many Requests
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Middleware добавляются в обратном порядке (LIFO) — LoggingMiddleware
 # должна быть последней добавленной чтобы обернуть все запросы первой
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    # Читаем из настроек — не хардкодим origins
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

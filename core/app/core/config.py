@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # Порт Core API (используется воркерами для ingest)
     APP_PORT: int = 8000
 
+    # Разрешённые CORS-источники (список через запятую в .env)
+    # Пример: ALLOWED_ORIGINS=http://localhost:3000,https://app.example.com
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
+
 
 @lru_cache
 def get_settings() -> Settings:

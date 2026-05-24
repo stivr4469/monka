@@ -9,21 +9,18 @@
 
 Результаты появляются в /api/v1/events/?event_type=stealer_log
 """
-import concurrent.futures
-import sys
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
+from app.core.rate_limit import limiter
+from app.workers_client import ensure_workers_path, get_executor
 
-# ── импорт воркера ──────────────────────────────────────
-_workers_path = Path(__file__).parent.parent.parent.parent.parent.parent / "workers"
-if str(_workers_path) not in sys.path:
-    sys.path.insert(0, str(_workers_path))
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.stealer_sources import query_stealer_sources
@@ -31,8 +28,6 @@ try:
 except ImportError as _e:
     _SOURCES_AVAILABLE = False
     _IMPORT_ERROR = str(_e)
-
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
 
 router = APIRouter(prefix="/scan", tags=["scan"])
 
@@ -65,7 +60,9 @@ class StealerSourcesRequest(BaseModel):
     "/stealer-sources",
     summary="Проверка по источникам стилер-логов",
 )
+@limiter.limit("20/minute")  # Ограничение запуска сканирований: 20 в минуту с IP
 async def run_stealer_sources(
+    request: Request,  # slowapi требует request для извлечения IP
     body: StealerSourcesRequest,
     current_user: CurrentUser,
 ):
@@ -78,7 +75,7 @@ async def run_stealer_sources(
     domain = body.domain
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    _executor.submit(
+    get_executor().submit(
         query_stealer_sources,
         domain,
         core_api_url,

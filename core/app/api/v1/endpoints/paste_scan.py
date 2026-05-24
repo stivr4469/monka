@@ -4,27 +4,18 @@
 Запускает monitor_pastes в фоне (ThreadPoolExecutor).
 Результаты появятся в /api/v1/events/?event_type=paste_leak
 """
-import concurrent.futures
-import os
-import sys
-from pathlib import Path
-
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
+from app.core.rate_limit import limiter
+from app.workers_client import ensure_workers_path, get_executor
 
 router = APIRouter(prefix="/scan", tags=["scan"])
 
-# Пул потоков для фоновых задач — max_workers=4 позволяет параллельно
-# сканировать несколько доменов без блокировки event loop FastAPI
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-
-# Добавляем workers/ в sys.path чтобы импортировать tasks.paste_monitor
-_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
-if _WORKERS_PATH not in sys.path:
-    sys.path.insert(0, _WORKERS_PATH)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.paste_monitor import monitor_pastes
@@ -56,7 +47,9 @@ class PasteScanResponse(BaseModel):
     response_model=PasteScanResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("20/minute")  # Ограничение запуска сканирований: 20 в минуту с IP
 async def trigger_paste_scan(
+    request: Request,  # slowapi требует request для извлечения IP
     body: PasteScanRequest,
     current_user: CurrentUser,
 ) -> PasteScanResponse:
@@ -79,11 +72,10 @@ async def trigger_paste_scan(
             detail="Домен не указан",
         )
 
-    # Определяем URL Core API — воркер обращается к нему для ingest событий
-    port = int(os.getenv("APP_PORT", "8000"))
-    core_api_url = f"http://127.0.0.1:{port}"
+    # Определяем URL Core API через settings — единственный источник истины
+    core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    _executor.submit(
+    get_executor().submit(
         monitor_pastes,
         domain,
         core_api_url,

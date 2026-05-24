@@ -1,8 +1,4 @@
 import logging
-import os
-import sys
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,14 +7,15 @@ from app.api.deps import DBDep, verify_internal_secret
 from app.core.config import settings
 from app.models.asset import Asset
 from app.models.event import Event
+from app.models.organization import Organization
 from app.schemas.normalized_event import NormalizedEvent
+from app.services.webhook import notify_critical_event
+from app.workers_client import ensure_workers_path, get_executor
 
 logger = logging.getLogger(__name__)
 
-# Подключаем воркер Telegram-алертов
-_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
-if _WORKERS_PATH not in sys.path:
-    sys.path.insert(0, _WORKERS_PATH)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.telegram_alerts import dispatch_alerts as _dispatch_alerts
@@ -26,8 +23,8 @@ try:
 except ImportError:
     _ALERTS_AVAILABLE = False
 
-_alert_executor = ThreadPoolExecutor(max_workers=1)
 _SEVERITY_FOR_ALERTS = {"low", "medium", "high", "critical"}
+
 _APP_PORT: int = settings.APP_PORT
 
 router = APIRouter(
@@ -57,6 +54,14 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         select(Asset).where(Asset.domain == event.target_domain, Asset.is_active == True)  # noqa: E712
     )
     asset = asset_result.scalar_one_or_none()
+
+    # Загружаем организацию для webhook (только если нужно — при critical)
+    org: Organization | None = None
+    if asset is not None and event.severity == "critical":
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == asset.organization_id)
+        )
+        org = org_result.scalar_one_or_none()
 
     db_event = Event(
         event_type=event.event_type,
@@ -90,12 +95,23 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
     # Отправляем Telegram-алерт в фоне для non-info событий
     if _ALERTS_AVAILABLE and event.severity in _SEVERITY_FOR_ALERTS and settings.TELEGRAM_BOT_TOKEN:
         core_url = f"http://127.0.0.1:{_APP_PORT}"
-        _alert_executor.submit(
+        get_executor().submit(
             _dispatch_alerts,
             event.model_dump(),
             core_url,
             settings.INTERNAL_API_SECRET,
             settings.TELEGRAM_BOT_TOKEN,
+        )
+
+    # Отправляем webhook-уведомление для критических событий (если задан webhook_url)
+    if event.severity == "critical" and org is not None and org.webhook_url:
+        notify_critical_event(
+            webhook_url=org.webhook_url,
+            event_type=event.event_type,
+            domain=event.target_domain,
+            severity=event.severity,
+            detected_at=db_event.detected_at,
+            source_name=event.source_name,
         )
 
     return {"status": "accepted", "event_id": db_event.id}

@@ -96,7 +96,68 @@
 
 Begin by setting up the project structure and writing the initial files for Step 1.
 
-Как использовать эту инструкцию:
+---
+
+## Фаза 5: Продвинутый Darknet Intelligence (Недели 9–10)
+
+**Цель:** Реальный доступ к .onion и форумным данным без костылей.
+
+### 5.1 Tor-инфраструктура
+- Tor SOCKS5 прокси (socks5h://127.0.0.1:9050) в отдельном сервисе
+- httpx-клиент с ротацией цепочек (NEWNYM через управляющий порт 9051)
+- Таймауты и retry-логика под специфику Tor-сети
+
+### 5.2 Прямой парсинг Ransomware Leak Sites
+- LockBit 3.0, ALPHV/BlackCat, Play, Clop, RansomHub — прямые onion-адреса
+- BeautifulSoup + регулярный мониторинг новых жертв
+- Автообновление onion-адресов через GitHub-агрегаторы ransomwatch
+- Severity: critical для совпадений по домену клиента
+
+### 5.3 IntelX.io API Integration
+- `/phonebook/search` — поиск по доменам в утёкших базах форумов (XSS, Exploit, BreachForums)
+- Бесплатный тир: 100 запросов/день — достаточно для MVP
+- Нормализация в EventType: `forum_mention`, severity: `high`
+
+### 5.4 Расширенный RansomWatch
+- Парсинг полного JSON-фида всех 100+ групп вымогателей
+- Инкрементальная обработка (только новые посты с timestamp > last_run)
+
+---
+
+## Фаза 6: Production Hardening & Senior Code Review (Недели 11–12)
+
+**Цель:** Код уровня production, готовый к первым коммерческим клиентам.
+
+### 6.1 Senior Code Review
+- [ ] Run full senior code review.
+- [ ] Refactor weak parts.
+- [ ] Optimize architecture.
+- [ ] Add missing production features.
+
+### 6.2 Архитектурные улучшения
+- Устранить дублирование `_executor` и `sys.path` в каждом эндпоинте → вынести в `workers/client.py`
+- Исправить баг `port` (undefined variable) в `scheduled_scan.py`
+- Единый `WorkerClient` с retry/timeout вместо прямых `httpx.post`
+
+### 6.3 Production-фичи
+- Rate limiting на все публичные эндпоинты (slowapi)
+- CORS whitelist из конфига (не хардкод `localhost:3000`)
+- Пагинация событий (cursor-based, не offset)
+- Export событий в CSV/JSON
+- Webhook-нотификации при новом critical-событии
+- Полная валидация входных данных (Pydantic strict mode)
+- 80%+ test coverage (pytest + httpx AsyncClient)
+
+### 6.4 Frontend Production
+- Тёмная тема с переключателем
+- Real-time polling событий (SSE или WebSocket)
+- Фильтрация таблицы событий по severity/type/domain
+- Risk Score дашборд на главной странице
+- Mobile-responsive вёрстка
+
+---
+
+## Как использовать эту инструкцию:
 
 1.  Инициализируйте пустой git-репозиторий в рабочей папке.
 2.  Запустите вашего CLI-агента (например, aider или активируйте расширение Roo

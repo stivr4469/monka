@@ -1,6 +1,6 @@
 /**
  * EASM Security Dashboard — app.js
- * Vanilla JS, без фреймворков. Весь UI в этом файле.
+ * Vanilla JS ES6+, без фреймворков.
  */
 
 'use strict';
@@ -9,8 +9,36 @@
 // Константы
 // ─────────────────────────────────────────────
 
-const PAGE_SIZE = 20;         // строк на страницу в Events
-const REFRESH_INTERVAL = 30;  // секунд для авто-обновления Dashboard
+const PAGE_SIZE       = 20;  // строк на страницу в Events
+const REFRESH_INTERVAL = 30; // секунд авто-обновления Dashboard
+
+// ─────────────────────────────────────────────
+// Управление темой — Dark/Light Mode
+// ─────────────────────────────────────────────
+
+const Theme = {
+  STORAGE_KEY: 'easm_theme',
+
+  /** Применяет тему и обновляет иконку в хедере */
+  apply(mode) {
+    document.documentElement.setAttribute('data-theme', mode);
+    localStorage.setItem(this.STORAGE_KEY, mode);
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = mode === 'light' ? '🌙' : '☀️';
+  },
+
+  /** Переключить между dark и light */
+  toggle() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    this.apply(current === 'dark' ? 'light' : 'dark');
+  },
+
+  /** Инициализация — читаем из localStorage, по умолчанию dark */
+  init() {
+    const saved = localStorage.getItem(this.STORAGE_KEY) || 'dark';
+    this.apply(saved);
+  },
+};
 
 // ─────────────────────────────────────────────
 // Класс API — все HTTP-запросы к бэкенду
@@ -33,8 +61,7 @@ class API {
   }
 
   /**
-   * Базовый метод запроса.
-   * При 401 — редирект на страницу логина.
+   * Базовый метод запроса. При 401 — редирект на страницу логина.
    * @param {string} path  — относительный путь, например '/api/v1/events/'
    * @param {RequestInit} opts — стандартные fetch-опции
    */
@@ -121,9 +148,7 @@ class API {
     return res.json();
   }
 
-  /**
-   * DELETE /api/v1/assets/{id}
-   */
+  /** DELETE /api/v1/assets/{id} */
   static async deleteAsset(id) {
     const res = await this.request(`/api/v1/assets/${id}`, { method: 'DELETE' });
     if (!res || (res.status !== 204 && !res.ok)) {
@@ -139,6 +164,21 @@ class API {
       throw new Error(err.detail || `HTTP ${res?.status}`);
     }
     return res.json();
+  }
+
+  /**
+   * GET /api/v1/assets/{id}/risk-score
+   * Возвращает { score: number } или 404 → возвращаем null
+   */
+  static async getRiskScore(assetId) {
+    try {
+      const res = await this.request(`/api/v1/assets/${assetId}/risk-score`);
+      if (!res || res.status === 404) return null;
+      if (!res.ok) return null;
+      return res.json();
+    } catch {
+      return null;
+    }
   }
 
   /** GET /api/v1/alerts/ */
@@ -184,7 +224,7 @@ class API {
 
   /**
    * Запуск скана нужного модуля.
-   * module: 'subfinder' | 'github' | 'paste' | 'breach' | 'gitleaks'
+   * module: 'subfinder' | 'github' | 'paste'
    */
   static async startScan(module, domain) {
     const paths = {
@@ -193,12 +233,24 @@ class API {
       paste:     '/api/v1/scan/paste',
     };
     if (module === 'subfinder') {
-      // Subfinder запускается при создании актива
       return this.createAsset({ domain });
     }
     const path = paths[module];
     if (!path) throw new Error(`Неизвестный модуль: ${module}`);
     const res = await this.request(path, {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
+  /** POST /api/v1/scan/darknet */
+  static async scanDarknet(domain) {
+    const res = await this.request('/api/v1/scan/darknet', {
       method: 'POST',
       body: JSON.stringify({ domain }),
     });
@@ -224,6 +276,7 @@ const Toast = {
   },
 
   /**
+   * Показать toast-уведомление.
    * @param {'success'|'error'|'info'|'warning'} type
    * @param {string} title
    * @param {string} [msg]
@@ -236,24 +289,29 @@ const Toast = {
       info:    `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4M8 5.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
       warning: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2L14 13H2L8 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3M8 10.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
     };
+
+    const colorMap = {
+      success: 'var(--success)',
+      error:   'var(--sev-critical)',
+      info:    'var(--accent)',
+      warning: 'var(--sev-high)',
+    };
+
     const el = document.createElement('div');
     el.className = `toast toast-${type}`;
     el.innerHTML = `
-      <span class="toast-icon" style="color:var(--sev-${type === 'error' ? 'critical' : type === 'warning' ? 'high' : type === 'success' ? '' : ''}${type === 'success' ? 'none' : ''}">${icons[type]}</span>
+      <span class="toast-icon" style="color:${colorMap[type]}">${icons[type] || ''}</span>
       <div class="toast-content">
         <div class="toast-title">${escHtml(title)}</div>
         ${msg ? `<div class="toast-msg">${escHtml(msg)}</div>` : ''}
       </div>`;
 
-    // Цвет иконки через inline style для корректного соответствия типу
-    const iconEl = el.querySelector('.toast-icon');
-    const colorMap = { success: 'var(--success)', error: 'var(--sev-critical)', info: 'var(--accent)', warning: 'var(--sev-high)' };
-    iconEl.style.color = colorMap[type];
-
     this.container.appendChild(el);
+
+    // Авто-скрытие через 4 секунды
     setTimeout(() => {
       el.classList.add('hiding');
-      setTimeout(() => el.remove(), 200);
+      setTimeout(() => el.remove(), 250);
     }, 4000);
   },
 };
@@ -282,6 +340,13 @@ function fmtDate(iso) {
   }
 }
 
+/** Короткий формат времени — ЧЧ:ММ:СС */
+function fmtTime(date) {
+  return date.toLocaleTimeString('ru-RU', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
 /** Сокращение длинного текста */
 function truncate(str, len = 40) {
   if (!str) return '—';
@@ -293,10 +358,13 @@ function setLoading(btn, loading) {
   if (loading) {
     btn.disabled = true;
     btn._origHtml = btn.innerHTML;
-    btn.innerHTML = `<span class="spinner"></span>${btn.textContent.trim() ? ' Загрузка…' : ''}`;
+    const label = btn.textContent.trim();
+    btn.innerHTML = `<span class="spinner"></span>${label ? ' Загрузка…' : ''}`;
+    btn.classList.add('loading');
   } else {
     btn.disabled = false;
     btn.innerHTML = btn._origHtml || btn.innerHTML;
+    btn.classList.remove('loading');
   }
 }
 
@@ -314,6 +382,18 @@ function prettyJson(obj) {
   } catch {
     return String(obj);
   }
+}
+
+/** Пустой state HTML */
+function emptyStateHtml(text) {
+  return `
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 8v4M12 16h.01" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <h3>${escHtml(text)}</h3>
+    </div>`;
 }
 
 // ─────────────────────────────────────────────
@@ -350,6 +430,12 @@ const State = {
   eventsFilters: { severity: '', event_type: '', domain: '' },
   eventsData: [],
 
+  // Последнее время обновления событий
+  eventsLastUpdated: null,
+
+  // Кэш данных events для сравнения (поиск новых critical)
+  eventsCriticalIds: new Set(),
+
   // Assets
   assetsData: [],
 
@@ -357,9 +443,66 @@ const State = {
   alertsData: [],
 
   // Dashboard refresh timer
-  refreshTimer: null,
+  refreshTimer:    null,
   refreshCountdown: REFRESH_INTERVAL,
+
+  // Polling events (остановка когда вкладка скрыта)
+  eventsPollingTimer: null,
 };
+
+// ─────────────────────────────────────────────
+// Risk Score виджет
+// ─────────────────────────────────────────────
+
+/**
+ * Определяет цвет по значению risk score.
+ * 0-30 = зелёный, 31-60 = жёлтый, 61-80 = оранжевый, 81-100 = красный
+ */
+function riskScoreColor(score) {
+  if (score <= 30)  return '#3fb950';
+  if (score <= 60)  return '#e3b341';
+  if (score <= 80)  return '#f0883e';
+  return '#f85149';
+}
+
+/**
+ * Анимирует круговой индикатор Risk Score.
+ * @param {number|null} score — число 0-100 или null (N/A)
+ */
+function renderRiskScore(score) {
+  const widget = document.getElementById('risk-score-widget');
+  if (!widget) return;
+
+  const fill  = widget.querySelector('.risk-dial-fill');
+  const value = widget.querySelector('.risk-dial-value');
+  const desc  = widget.querySelector('.risk-score-desc');
+
+  if (score === null || score === undefined) {
+    if (fill)  fill.style.strokeDashoffset = '201';
+    if (value) value.textContent = 'N/A';
+    if (desc)  desc.textContent  = 'Нет данных о риске';
+    if (fill)  fill.style.stroke = 'var(--text-muted)';
+    return;
+  }
+
+  const clamped  = Math.max(0, Math.min(100, score));
+  const color    = riskScoreColor(clamped);
+  const offset   = 201 - (201 * clamped / 100); // stroke-dashoffset
+
+  // Устанавливаем цвет сразу, offset — через requestAnimationFrame для анимации
+  if (fill)  fill.style.stroke = color;
+  if (value) value.style.color = color;
+
+  requestAnimationFrame(() => {
+    if (fill) fill.style.strokeDashoffset = String(offset);
+  });
+
+  if (value) value.textContent = clamped;
+
+  const labels = ['Низкий', 'Средний', 'Высокий', 'Критический'];
+  const idx = clamped <= 30 ? 0 : clamped <= 60 ? 1 : clamped <= 80 ? 2 : 3;
+  if (desc) desc.textContent = `Уровень риска: ${labels[idx]}`;
+}
 
 // ─────────────────────────────────────────────
 // TAB: Dashboard
@@ -373,15 +516,23 @@ async function renderDashboard() {
     // Последние события для таблицы
     const events = await API.getEvents({ limit: 10 });
     renderRecentEvents(events);
+
+    // Если есть активы — берём risk score первого
+    if (State.assetsData && State.assetsData.length > 0) {
+      const data = await API.getRiskScore(State.assetsData[0].id);
+      renderRiskScore(data ? data.score : null);
+    } else {
+      renderRiskScore(null);
+    }
   } catch (e) {
     Toast.show('error', 'Ошибка загрузки', e.message);
   }
 }
 
 function renderStats(stats) {
-  const total    = stats.total || 0;
-  const bySev    = stats.by_severity || {};
-  const byType   = stats.by_type || {};
+  const total  = stats.total || 0;
+  const bySev  = stats.by_severity || {};
+  const byType = stats.by_type || {};
 
   // Карточки
   document.getElementById('stat-total').textContent    = total.toLocaleString('ru');
@@ -410,6 +561,39 @@ function renderStats(stats) {
         <span class="bar-count">${count.toLocaleString('ru')}</span>
       </div>`;
   }).join('');
+
+  // Severity chart (обновляем если элемент есть)
+  const sevChart = document.getElementById('severity-chart');
+  if (sevChart) {
+    const order  = ['critical', 'high', 'medium', 'low', 'info'];
+    const colors = {
+      critical: 'var(--sev-critical)',
+      high:     'var(--sev-high)',
+      medium:   'var(--sev-medium)',
+      low:      'var(--sev-low)',
+      info:     'var(--sev-info)',
+    };
+    const entries = order
+      .map(k => [k, bySev[k] || 0])
+      .filter(p => p[1] > 0);
+
+    if (!entries.length) {
+      sevChart.innerHTML = emptyStateHtml('Нет данных');
+    } else {
+      const maxSev = entries[0][1];
+      sevChart.innerHTML = entries.map(([sev, count]) => {
+        const pct   = Math.max(2, Math.round((count / maxSev) * 100));
+        const label = sev.charAt(0).toUpperCase() + sev.slice(1);
+        return `<div class="bar-row">
+          <span class="bar-label">${label}</span>
+          <div class="bar-track">
+            <div class="bar-fill" style="width:${pct}%;background:${colors[sev]}"></div>
+          </div>
+          <span class="bar-count">${count.toLocaleString('ru')}</span>
+        </div>`;
+      }).join('');
+    }
+  }
 }
 
 function renderRecentEvents(events) {
@@ -418,8 +602,12 @@ function renderRecentEvents(events) {
     tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Событий пока нет')}</td></tr>`;
     return;
   }
-  tbody.innerHTML = events.map(ev => `
-    <tr data-id="${escHtml(ev.id)}" onclick="toggleEventRow(this)">
+  tbody.innerHTML = events.map(ev => {
+    const isCritical = (ev.severity || '').toLowerCase() === 'critical';
+    return `
+    <tr data-id="${escHtml(ev.id)}"
+        class="${isCritical ? 'row-critical' : ''}"
+        onclick="toggleEventRow(this)">
       <td>${severityBadge(ev.severity)}</td>
       <td><code style="font-size:.8125rem">${escHtml(ev.event_type)}</code></td>
       <td><span class="domain-tag">${escHtml(ev.target_domain)}</span></td>
@@ -428,10 +616,11 @@ function renderRecentEvents(events) {
     </tr>
     <tr class="row-detail" id="detail-${escHtml(ev.id)}">
       <td colspan="5">
-        <strong style="color:var(--text-secondary);font-size:.8125rem">Payload:</strong>
+        <strong style="color:var(--text-2);font-size:.8125rem">Payload:</strong>
         <pre class="json-pre">${escHtml(prettyJson(ev.payload))}</pre>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 /** Раскрыть/закрыть строку таблицы с payload */
@@ -442,26 +631,22 @@ function toggleEventRow(tr) {
   detailRow.classList.toggle('open');
 }
 
-function emptyStateHtml(text) {
-  return `
-    <div class="empty-state">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M12 8v4M12 16h.01" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <h3>${escHtml(text)}</h3>
-    </div>`;
-}
-
+// ─────────────────────────────────────────────
 // Авто-обновление Dashboard
+// ─────────────────────────────────────────────
+
 function startDashboardRefresh() {
   stopDashboardRefresh();
   State.refreshCountdown = REFRESH_INTERVAL;
-  updateRefreshCounter();
+  _syncRefreshUI();
 
   State.refreshTimer = setInterval(() => {
+    // Не обновляем когда вкладка скрыта
+    if (document.hidden) return;
+
     State.refreshCountdown--;
-    updateRefreshCounter();
+    _syncRefreshUI();
+
     if (State.refreshCountdown <= 0) {
       State.refreshCountdown = REFRESH_INTERVAL;
       renderDashboard();
@@ -476,9 +661,26 @@ function stopDashboardRefresh() {
   }
 }
 
+/** Обновляет все счётчики countdown */
 function updateRefreshCounter() {
-  const el = document.getElementById('refresh-count');
-  if (el) el.textContent = State.refreshCountdown;
+  _syncRefreshUI();
+}
+
+function _syncRefreshUI() {
+  // Счётчик в хедере
+  const cnt = document.getElementById('refresh-count');
+  if (cnt) cnt.textContent = State.refreshCountdown;
+
+  // Счётчик в footer дашборда
+  const lbl = document.getElementById('refresh-label');
+  if (lbl) lbl.textContent = State.refreshCountdown;
+
+  // Индикатор в хедере — показываем только на дашборде
+  const indicator = document.getElementById('refresh-indicator');
+  if (indicator) {
+    const dashActive = document.getElementById('tab-dashboard')?.classList.contains('active');
+    indicator.style.display = dashActive ? 'flex' : 'none';
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -529,19 +731,22 @@ function assetCardHtml(a) {
           <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.2"/>
           <path d="M6 3.5V6l1.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
         </svg>
-        ID: <code style="font-size:.7rem">${escHtml(a.id.slice(0,8))}…</code>
+        ID: <code style="font-size:.7rem">${escHtml(a.id.slice(0, 8))}…</code>
       </div>
       <div class="asset-actions">
-        <button class="btn btn-primary btn-sm" onclick="handleScanAsset('${escHtml(a.id)}', '${escHtml(a.domain)}', this)">
+        <button class="btn btn-primary btn-sm"
+                onclick="handleScanAsset('${escHtml(a.id)}', '${escHtml(a.domain)}', this)">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             <path d="M1.5 1.5V6h4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           Scan Now
         </button>
-        <button class="btn btn-danger btn-sm" onclick="handleDeleteAsset('${escHtml(a.id)}', '${escHtml(a.domain)}', this)">
+        <button class="btn btn-danger btn-sm"
+                onclick="handleDeleteAsset('${escHtml(a.id)}', '${escHtml(a.domain)}', this)">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 3h8M5 1.5h2M4.5 9.5V5m3 4.5V5M3 3l.7 6.5h4.6L9 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M2 3h8M5 1.5h2M4.5 9.5V5m3 4.5V5M3 3l.7 6.5h4.6L9 3"
+                  stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           Delete
         </button>
@@ -554,7 +759,6 @@ async function handleScanAsset(id, domain, btn) {
   try {
     await API.scanAsset(id);
     Toast.show('success', 'Сканирование запущено', `Домен: ${domain}`);
-    // Записываем в лог сканов
     addScanLog('info', `Ручное сканирование: ${domain}`, 'processing');
   } catch (e) {
     Toast.show('error', 'Ошибка запуска скана', e.message);
@@ -576,7 +780,6 @@ async function handleDeleteAsset(id, domain, btn) {
   }
 }
 
-// Форма добавления актива
 function openAddAssetModal() {
   const form = document.getElementById('add-asset-form');
   if (form) form.reset();
@@ -605,42 +808,101 @@ async function submitAddAsset() {
 }
 
 // ─────────────────────────────────────────────
-// TAB: Events
+// TAB: Events — с polling и critical-toast
 // ─────────────────────────────────────────────
 
 async function renderEvents() {
   await loadEventsPage();
+  startEventsPolling();
 }
 
 async function loadEventsPage() {
   const limit  = PAGE_SIZE;
   const offset = (State.eventsPage - 1) * PAGE_SIZE;
-
-  const f = State.eventsFilters;
-  // API принимает limit, но не offset — загружаем с запасом и режем на клиенте
-  const fetchLimit = offset + limit + 1;
+  const f      = State.eventsFilters;
+  const fetchLimit = Math.min(offset + limit + 1, 500);
 
   const tbody = document.getElementById('events-tbody');
-  tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">
-    <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…</td></tr>`;
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="6"
+      style="text-align:center;padding:2rem;color:var(--text-muted)">
+      <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+    </td></tr>`;
+  }
 
   try {
     const all = await API.getEvents({
-      severity: f.severity || undefined,
+      severity:   f.severity   || undefined,
       event_type: f.event_type || undefined,
-      domain: f.domain || undefined,
-      limit: Math.min(fetchLimit, 500),
+      domain:     f.domain     || undefined,
+      limit:      fetchLimit,
     });
+
+    // Ищем новые critical события и показываем toast
+    _checkNewCritical(all);
 
     State.eventsData  = all;
     State.eventsTotal = all.length;
+    State.eventsLastUpdated = new Date();
 
     const page = all.slice(offset, offset + limit);
     buildEventsTable(page);
     buildPagination(all.length);
+    _updateEventsLastUpdated();
   } catch (e) {
     Toast.show('error', 'Ошибка загрузки событий', e.message);
-    tbody.innerHTML = `<tr><td colspan="6">${emptyStateHtml('Не удалось загрузить события')}</td></tr>`;
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="6">${emptyStateHtml('Не удалось загрузить события')}</td></tr>`;
+    }
+  }
+}
+
+/** Проверяем появились ли новые critical события */
+function _checkNewCritical(events) {
+  if (!State.eventsCriticalIds.size) {
+    // Первая загрузка — запомним все critical IDs без toast
+    events.forEach(ev => {
+      if ((ev.severity || '').toLowerCase() === 'critical') {
+        State.eventsCriticalIds.add(ev.id);
+      }
+    });
+    return;
+  }
+
+  events.forEach(ev => {
+    if ((ev.severity || '').toLowerCase() === 'critical'
+        && !State.eventsCriticalIds.has(ev.id)) {
+      State.eventsCriticalIds.add(ev.id);
+      Toast.show('error', 'Новое CRITICAL событие!',
+        `${ev.event_type} — ${ev.target_domain}`);
+    }
+  });
+}
+
+/** Обновляет строку «Последнее обновление» под таблицей */
+function _updateEventsLastUpdated() {
+  const el = document.getElementById('events-last-updated');
+  if (el && State.eventsLastUpdated) {
+    el.textContent = `Последнее обновление: ${fmtTime(State.eventsLastUpdated)}`;
+  }
+}
+
+/** Real-time polling событий каждые 30 секунд */
+function startEventsPolling() {
+  stopEventsPolling();
+  State.eventsPollingTimer = setInterval(() => {
+    // Останавливаем когда вкладка скрыта
+    if (document.hidden) return;
+    // Обновляем только если мы на вкладке Events
+    const eventsActive = document.getElementById('tab-events')?.classList.contains('active');
+    if (eventsActive) loadEventsPage();
+  }, REFRESH_INTERVAL * 1000);
+}
+
+function stopEventsPolling() {
+  if (State.eventsPollingTimer) {
+    clearInterval(State.eventsPollingTimer);
+    State.eventsPollingTimer = null;
   }
 }
 
@@ -658,7 +920,8 @@ function _payloadHtml(ev) {
       <div style="display:flex;align-items:center;gap:.6rem">
         <span style="color:var(--text-muted)">Pass:  </span>
         <span id="pwd-${escHtml(ev.id)}">***</span>
-        ${hasEnc ? `<button class="btn btn-ghost btn-sm" style="font-size:.75rem;padding:.15rem .5rem"
+        ${hasEnc ? `<button class="btn btn-secondary btn-sm"
+          style="font-size:.75rem;padding:.15rem .5rem"
           onclick="revealPassword('${escHtml(ev.id)}')">Показать</button>` : ''}
       </div>
       ${p.source_file ? `<div><span style="color:var(--text-muted)">File:  </span><span>${escHtml(p.source_file)}</span></div>` : ''}
@@ -668,25 +931,31 @@ function _payloadHtml(ev) {
 
 function buildEventsTable(events) {
   const tbody = document.getElementById('events-tbody');
+  if (!tbody) return;
   if (!events.length) {
     tbody.innerHTML = `<tr><td colspan="6">${emptyStateHtml('Событий не найдено')}</td></tr>`;
     return;
   }
-  tbody.innerHTML = events.map(ev => `
-    <tr data-id="${escHtml(ev.id)}" onclick="toggleEventRow(this)">
+  tbody.innerHTML = events.map(ev => {
+    const isCritical = (ev.severity || '').toLowerCase() === 'critical';
+    return `
+    <tr data-id="${escHtml(ev.id)}"
+        class="${isCritical ? 'row-critical' : ''}"
+        onclick="toggleEventRow(this)">
       <td>${severityBadge(ev.severity)}</td>
       <td><code style="font-size:.8125rem">${escHtml(ev.event_type)}</code></td>
       <td><span class="domain-tag">${escHtml(ev.target_domain)}</span></td>
-      <td style="color:var(--text-secondary)">${escHtml(ev.source_type)}</td>
-      <td style="color:var(--text-secondary)">${escHtml(truncate(ev.source_name, 32))}</td>
+      <td style="color:var(--text-2)">${escHtml(ev.source_type)}</td>
+      <td style="color:var(--text-2)">${escHtml(truncate(ev.source_name, 32))}</td>
       <td style="color:var(--text-muted);font-size:.8125rem;white-space:nowrap">${fmtDate(ev.detected_at)}</td>
     </tr>
     <tr class="row-detail" id="detail-${escHtml(ev.id)}">
       <td colspan="6" style="padding:.75rem 1rem 1rem 2.5rem">
-        <strong style="color:var(--text-secondary);font-size:.8125rem;display:block;margin-bottom:.4rem">Payload:</strong>
+        <strong style="color:var(--text-2);font-size:.8125rem;display:block;margin-bottom:.4rem">Payload:</strong>
         ${_payloadHtml(ev)}
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 async function revealPassword(eventId) {
@@ -695,7 +964,6 @@ async function revealPassword(eventId) {
   if (!el) return;
 
   if (el.dataset.revealed === '1') {
-    // Скрыть обратно
     el.textContent = '***';
     el.dataset.revealed = '0';
     if (btn) btn.textContent = 'Показать';
@@ -719,30 +987,34 @@ async function revealPassword(eventId) {
 }
 
 function buildPagination(total) {
-  const pages       = Math.ceil(total / PAGE_SIZE) || 1;
-  const current     = State.eventsPage;
-  const start       = (current - 1) * PAGE_SIZE + 1;
-  const end         = Math.min(current * PAGE_SIZE, total);
+  const pages   = Math.ceil(total / PAGE_SIZE) || 1;
+  const current = State.eventsPage;
+  const start   = (current - 1) * PAGE_SIZE + 1;
+  const end     = Math.min(current * PAGE_SIZE, total);
 
-  document.getElementById('pagination-info').textContent =
-    total ? `${start}–${end} из ${total}` : 'Нет данных';
+  const info = document.getElementById('pagination-info');
+  if (info) info.textContent = total ? `${start}–${end} из ${total}` : 'Нет данных';
 
-  const ctrl = document.getElementById('pagination-controls');
+  const ctrl  = document.getElementById('pagination-controls');
   const range = buildPageRange(current, pages);
+  if (!ctrl) return;
+
   ctrl.innerHTML = `
-    <button class="page-btn" onclick="goToPage(${current - 1})" ${current <= 1 ? 'disabled' : ''}>‹</button>
+    <button class="page-btn" onclick="goToPage(${current - 1})"
+            ${current <= 1 ? 'disabled' : ''}>‹</button>
     ${range.map(p => p === '…'
       ? `<span class="page-btn" style="cursor:default">…</span>`
-      : `<button class="page-btn ${p === current ? 'active' : ''}" onclick="goToPage(${p})">${p}</button>`
+      : `<button class="page-btn ${p === current ? 'active' : ''}"
+               onclick="goToPage(${p})">${p}</button>`
     ).join('')}
-    <button class="page-btn" onclick="goToPage(${current + 1})" ${current >= pages ? 'disabled' : ''}>›</button>`;
+    <button class="page-btn" onclick="goToPage(${current + 1})"
+            ${current >= pages ? 'disabled' : ''}>›</button>`;
 }
 
 /** Умный диапазон страниц с многоточием */
 function buildPageRange(current, pages) {
   if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1);
-  const result = [];
-  result.push(1);
+  const result = [1];
   if (current > 3) result.push('…');
   for (let p = Math.max(2, current - 1); p <= Math.min(pages - 1, current + 1); p++) result.push(p);
   if (current < pages - 2) result.push('…');
@@ -761,17 +1033,20 @@ function goToPage(page) {
 function applyEventsFilter() {
   State.eventsPage    = 1;
   State.eventsFilters = {
-    severity:   document.getElementById('filter-severity').value,
-    event_type: document.getElementById('filter-type').value,
-    domain:     document.getElementById('filter-domain').value.trim(),
+    severity:   document.getElementById('filter-severity')?.value || '',
+    event_type: document.getElementById('filter-type')?.value || '',
+    domain:     document.getElementById('filter-domain')?.value.trim() || '',
   };
   loadEventsPage();
 }
 
 function clearEventsFilter() {
-  document.getElementById('filter-severity').value = '';
-  document.getElementById('filter-type').value     = '';
-  document.getElementById('filter-domain').value   = '';
+  const sev = document.getElementById('filter-severity');
+  const typ = document.getElementById('filter-type');
+  const dom = document.getElementById('filter-domain');
+  if (sev) sev.value = '';
+  if (typ) typ.value = '';
+  if (dom) dom.value = '';
   State.eventsFilters = { severity: '', event_type: '', domain: '' };
   State.eventsPage    = 1;
   loadEventsPage();
@@ -783,19 +1058,22 @@ function clearEventsFilter() {
 
 async function renderAlerts() {
   const container = document.getElementById('alerts-list');
-  container.innerHTML = `<div class="loading-skeleton skeleton-line" style="height:60px"></div>`;
+  if (container) {
+    container.innerHTML = `<div class="loading-skeleton skeleton-line" style="height:60px"></div>`;
+  }
   try {
     const alerts = await API.getAlerts();
     State.alertsData = alerts;
     buildAlertsList(alerts);
   } catch (e) {
     Toast.show('error', 'Ошибка загрузки алертов', e.message);
-    container.innerHTML = emptyStateHtml('Не удалось загрузить правила');
+    if (container) container.innerHTML = emptyStateHtml('Не удалось загрузить правила');
   }
 }
 
 function buildAlertsList(rules) {
   const container = document.getElementById('alerts-list');
+  if (!container) return;
   if (!rules.length) {
     container.innerHTML = emptyStateHtml('Правил алертов нет. Создайте первое.');
     return;
@@ -805,25 +1083,35 @@ function buildAlertsList(rules) {
       <div class="alert-rule-info">
         <div class="alert-rule-name">
           ${escHtml(r.name)}
-          ${r.is_active ? '<span class="badge badge-success" style="margin-left:.5rem">Active</span>' : '<span class="badge badge-danger" style="margin-left:.5rem">Inactive</span>'}
+          ${r.is_active
+            ? '<span class="badge badge-success" style="margin-left:.5rem">Active</span>'
+            : '<span class="badge badge-danger" style="margin-left:.5rem">Inactive</span>'}
         </div>
         <div class="alert-rule-meta">
           <span>Min severity: ${severityBadge(r.min_severity)}</span>
-          ${r.target_domain ? `<span class="domain-tag">${escHtml(r.target_domain)}</span>` : '<span style="color:var(--text-muted)">Все домены</span>'}
+          ${r.target_domain
+            ? `<span class="domain-tag">${escHtml(r.target_domain)}</span>`
+            : '<span style="color:var(--text-muted)">Все домены</span>'}
           <span>Chat: <code>${escHtml(r.telegram_chat_id)}</code></span>
-          ${r.event_types ? `<span>Types: ${r.event_types.map(t => `<code>${escHtml(t)}</code>`).join(', ')}</span>` : ''}
+          ${r.event_types
+            ? `<span>Types: ${r.event_types.map(t => `<code>${escHtml(t)}</code>`).join(', ')}</span>`
+            : ''}
         </div>
       </div>
       <div class="alert-rule-actions">
-        <button class="btn btn-secondary btn-sm" onclick="handleTestAlert('${escHtml(r.id)}', this)">
+        <button class="btn btn-secondary btn-sm"
+                onclick="handleTestAlert('${escHtml(r.id)}', this)">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="1.5"
+                  stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           Test
         </button>
-        <button class="btn btn-danger btn-sm" onclick="handleDeleteAlert('${escHtml(r.id)}', '${escHtml(r.name)}', this)">
+        <button class="btn btn-danger btn-sm"
+                onclick="handleDeleteAlert('${escHtml(r.id)}', '${escHtml(r.name)}', this)">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 3h8M5 1.5h2M4.5 9.5V5m3 4.5V5M3 3l.7 6.5h4.6L9 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M2 3h8M5 1.5h2M4.5 9.5V5m3 4.5V5M3 3l.7 6.5h4.6L9 3"
+                  stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           Delete
         </button>
@@ -857,10 +1145,10 @@ async function handleDeleteAlert(id, name, btn) {
 }
 
 async function submitCreateAlert() {
-  const name       = document.getElementById('alert-name').value.trim();
-  const domain     = document.getElementById('alert-domain').value.trim();
-  const minSev     = document.getElementById('alert-min-severity').value;
-  const chatId     = document.getElementById('alert-chat-id').value.trim();
+  const name   = document.getElementById('alert-name')?.value.trim() || '';
+  const domain = document.getElementById('alert-domain')?.value.trim() || '';
+  const minSev = document.getElementById('alert-min-severity')?.value || 'medium';
+  const chatId = document.getElementById('alert-chat-id')?.value.trim() || '';
 
   if (!name || !chatId) {
     Toast.show('warning', 'Заполните обязательные поля', 'Имя и Telegram chat_id обязательны');
@@ -879,7 +1167,7 @@ async function submitCreateAlert() {
   try {
     await API.createAlert(body);
     Toast.show('success', 'Правило создано', name);
-    document.getElementById('create-alert-form').reset();
+    document.getElementById('create-alert-form')?.reset();
     renderAlerts();
   } catch (e) {
     Toast.show('error', 'Ошибка создания правила', e.message);
@@ -892,7 +1180,6 @@ async function submitCreateAlert() {
 // TAB: Scan
 // ─────────────────────────────────────────────
 
-// Загружаем историю сканов из localStorage
 const SCAN_LOG_KEY = 'easm_scan_log';
 const MAX_SCAN_LOG = 30;
 
@@ -914,14 +1201,16 @@ function getScanLogs() {
 
 function renderScanLog() {
   const container = document.getElementById('scan-log');
+  if (!container) return;
   const logs = getScanLogs();
   if (!logs.length) {
     container.innerHTML = '<span style="color:var(--text-muted)">Запусков пока не было</span>';
     return;
   }
   container.innerHTML = logs.map(l => {
-    const cls = l.status === 'ok' ? 'scan-log-status-ok'
-      : l.status === 'error' ? 'scan-log-status-error' : 'scan-log-status-info';
+    const cls = l.status === 'ok'    ? 'scan-log-status-ok'
+      : l.status === 'error' ? 'scan-log-status-error'
+      : 'scan-log-status-info';
     return `
       <div class="scan-log-entry">
         <span class="scan-log-time">${fmtDate(l.ts)}</span>
@@ -937,13 +1226,13 @@ function renderScan() {
 }
 
 async function handleStartScan() {
-  const domain = document.getElementById('scan-domain').value.trim();
+  const domainInput = document.getElementById('scan-domain');
+  const domain = domainInput?.value.trim() || '';
   if (!domain) {
     Toast.show('warning', 'Укажите домен');
     return;
   }
 
-  // Собираем выбранные модули
   const selected = [...document.querySelectorAll('.module-chip.selected')]
     .map(el => el.dataset.module);
 
@@ -980,26 +1269,137 @@ function toggleModule(chip) {
 }
 
 // ─────────────────────────────────────────────
+// TAB: Darknet Monitoring
+// ─────────────────────────────────────────────
+
+function renderDarknet() {
+  // Инициализация вкладки, если нужно (данные уже в HTML)
+  const tbody = document.getElementById('darknet-events-tbody');
+  if (tbody && tbody.children.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Событий пока нет')}</td></tr>`;
+  }
+}
+
+async function handleDarknetScan() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для мониторинга');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+
+  const btn    = document.getElementById('darknet-scan-btn');
+  const status = document.getElementById('darknet-scan-status');
+
+  setLoading(btn, true);
+  if (status) {
+    status.style.display = 'block';
+    status.innerHTML = `
+      <div style="color:var(--accent);display:flex;align-items:center;gap:.5rem;font-size:.875rem">
+        <span class="spinner"></span>
+        Запуск мониторинга для <strong>${escHtml(domain)}</strong>…
+      </div>`;
+  }
+
+  try {
+    const data = await API.scanDarknet(domain);
+    Toast.show('success', 'Мониторинг запущен', `Домен: ${domain}`);
+    addScanLog('ok', domain, 'darknet scan: запущен');
+
+    if (status) {
+      status.innerHTML = `
+        <div style="background:var(--success-bg);border:1px solid rgba(63,185,80,.3);
+                    border-radius:8px;padding:.875rem 1rem;color:var(--success);font-size:.875rem">
+          Мониторинг Darknet запущен для <strong>${escHtml(domain)}</strong>.
+          Результаты появятся в таблице ниже.
+        </div>`;
+    }
+
+    // Перезагружаем таблицу darknet-событий
+    await loadDarknetEvents(domain);
+
+  } catch (e) {
+    Toast.show('error', 'Ошибка запуска darknet-сканирования', e.message);
+    if (status) {
+      status.innerHTML = `
+        <div style="background:var(--danger-bg);border:1px solid rgba(248,81,73,.3);
+                    border-radius:8px;padding:.875rem 1rem;color:var(--danger);font-size:.875rem">
+          Ошибка: ${escHtml(e.message)}
+        </div>`;
+    }
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/** Загружает darknet-события из общего API с фильтром по типу */
+async function loadDarknetEvents(domain) {
+  const tbody = document.getElementById('darknet-events-tbody');
+  if (!tbody) return;
+
+  tbody.innerHTML = `<tr><td colspan="5"
+    style="text-align:center;padding:2rem;color:var(--text-muted)">
+    <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+  </td></tr>`;
+
+  try {
+    const events = await API.getEvents({
+      event_type: 'darknet_mention',
+      domain: domain || undefined,
+      limit: 100,
+    });
+
+    if (!events.length) {
+      tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Darknet-событий не найдено')}</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = events.map(ev => `
+      <tr data-id="${escHtml(ev.id)}" onclick="toggleEventRow(this)">
+        <td>${severityBadge(ev.severity)}</td>
+        <td><span class="domain-tag">${escHtml(ev.target_domain)}</span></td>
+        <td style="color:var(--text-2)">${escHtml(ev.source_name || '—')}</td>
+        <td style="color:var(--text-muted);font-size:.8125rem">${fmtDate(ev.detected_at)}</td>
+        <td>
+          <code style="font-size:.75rem;color:var(--text-2)">${escHtml(truncate(ev.payload?.excerpt || '—', 50))}</code>
+        </td>
+      </tr>
+      <tr class="row-detail" id="detail-${escHtml(ev.id)}">
+        <td colspan="5">
+          <pre class="json-pre">${escHtml(prettyJson(ev.payload))}</pre>
+        </td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5">${emptyStateHtml('Ошибка загрузки')}</td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────
 // Навигация по табам
 // ─────────────────────────────────────────────
 
 const TAB_LOADERS = {
   dashboard: () => { renderDashboard(); startDashboardRefresh(); },
-  assets:    () => { stopDashboardRefresh(); renderAssets(); },
+  assets:    () => { stopDashboardRefresh(); stopEventsPolling(); renderAssets(); },
   events:    () => { stopDashboardRefresh(); renderEvents(); },
-  alerts:    () => { stopDashboardRefresh(); renderAlerts(); },
-  scan:      () => { stopDashboardRefresh(); renderScan(); },
+  alerts:    () => { stopDashboardRefresh(); stopEventsPolling(); renderAlerts(); },
+  scan:      () => { stopDashboardRefresh(); stopEventsPolling(); renderScan(); },
+  darknet:   () => { stopDashboardRefresh(); stopEventsPolling(); renderDarknet(); },
 };
 
 function switchTab(name) {
-  document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
+  document.querySelectorAll('.nav-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-pane').forEach(p =>
+    p.classList.toggle('active', p.id === `tab-${name}`));
+
   const loader = TAB_LOADERS[name];
   if (loader) loader();
 }
 
 // ─────────────────────────────────────────────
-// Проверка авторизации при загрузке страницы
+// Авторизация
 // ─────────────────────────────────────────────
 
 function checkAuth() {
@@ -1016,47 +1416,6 @@ function handleLogout() {
 }
 
 // ─────────────────────────────────────────────
-// Инициализация приложения
-// ─────────────────────────────────────────────
-
-function init() {
-  if (!checkAuth()) return;
-
-  // Навигация
-  document.querySelectorAll('.nav-tab').forEach(tab => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
-  });
-
-  // Закрытие модалок
-  Modal.bindBackdrop('add-asset-modal');
-
-  // Enter в форме логина — отправка
-  document.querySelectorAll('.modal input').forEach(inp => {
-    inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter') e.target.closest('.modal')?.querySelector('.btn-primary')?.click();
-    });
-  });
-
-  // Фильтры Events — Enter и debounce
-  const filterDomain = document.getElementById('filter-domain');
-  if (filterDomain) {
-    let debounce;
-    filterDomain.addEventListener('input', () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(applyEventsFilter, 400);
-    });
-  }
-
-  // Клики на chip-модулях
-  document.querySelectorAll('.module-chip').forEach(chip => {
-    chip.addEventListener('click', () => toggleModule(chip));
-  });
-
-  // Показываем первый таб
-  switchTab('dashboard');
-}
-
-// ─────────────────────────────────────────────
 // Охота на стилер-логи
 // ─────────────────────────────────────────────
 
@@ -1069,7 +1428,7 @@ function handleStealerFileSelect(input) {
 
 function handleStealerDrop(event) {
   event.preventDefault();
-  document.getElementById('stealer-drop-zone').classList.remove('drag-over');
+  document.getElementById('stealer-drop-zone')?.classList.remove('drag-over');
   const file = event.dataTransfer.files[0];
   if (!file) return;
   if (!/\.(zip|txt|log|csv)$/i.test(file.name)) {
@@ -1084,15 +1443,16 @@ function _updateStealerUI() {
   const infoEl  = document.getElementById('stealer-file-info');
   const labelEl = document.getElementById('stealer-drop-label');
   const btn     = document.getElementById('stealer-upload-btn');
+
   if (_stealerFile) {
     const mb = (_stealerFile.size / 1048576).toFixed(2);
-    infoEl.textContent  = `${_stealerFile.name} — ${mb} МБ`;
-    labelEl.innerHTML   = 'Файл выбран. <span style="color:var(--accent);cursor:pointer">Заменить</span>';
-    btn.disabled = false;
+    if (infoEl)  infoEl.textContent = `${_stealerFile.name} — ${mb} МБ`;
+    if (labelEl) labelEl.innerHTML  = 'Файл выбран. <span style="color:var(--accent);cursor:pointer">Заменить</span>';
+    if (btn)     btn.disabled = false;
   } else {
-    infoEl.textContent  = '';
-    labelEl.innerHTML   = 'Перетащите ZIP / TXT или <span style="color:var(--accent);cursor:pointer">выберите файл</span>';
-    btn.disabled = true;
+    if (infoEl)  infoEl.textContent = '';
+    if (labelEl) labelEl.innerHTML  = 'Перетащите ZIP / TXT или <span style="color:var(--accent);cursor:pointer">выберите файл</span>';
+    if (btn)     btn.disabled = true;
   }
 }
 
@@ -1102,12 +1462,18 @@ async function handleStealerUpload() {
     return;
   }
 
-  const btn       = document.getElementById('stealer-upload-btn');
-  const resultEl  = document.getElementById('stealer-result');
-  const domainsRaw = document.getElementById('stealer-domains').value.trim();
+  const btn        = document.getElementById('stealer-upload-btn');
+  const resultEl   = document.getElementById('stealer-result');
+  const progressEl = document.getElementById('stealer-progress');
+  const fillEl     = document.getElementById('stealer-progress-fill');
+  const domainsRaw = document.getElementById('stealer-domains')?.value.trim() || '';
 
   setLoading(btn, true);
-  resultEl.style.display = 'none';
+  if (resultEl) resultEl.style.display = 'none';
+
+  // Показываем прогресс-бар
+  if (progressEl) progressEl.classList.add('visible');
+  if (fillEl)     fillEl.style.width = '0%';
 
   try {
     const token = API.getToken();
@@ -1117,63 +1483,91 @@ async function handleStealerUpload() {
     let url = '/api/v1/stealer/upload';
     if (domainsRaw) url += `?domains=${encodeURIComponent(domainsRaw)}`;
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
+    // XHR для прогресс-бара (fetch не поддерживает upload progress)
+    const data = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && fillEl) {
+          fillEl.style.width = `${Math.round(e.loaded / e.total * 100)}%`;
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 401) {
+          API.clearToken();
+          window.location.href = '/login.html';
+          reject(new Error('Unauthorized'));
+          return;
+        }
+        try {
+          const json = JSON.parse(xhr.responseText);
+          if (xhr.status >= 400) reject(new Error(json.detail || `HTTP ${xhr.status}`));
+          else resolve(json);
+        } catch {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => reject(new Error('Ошибка сети')));
+      xhr.send(fd);
     });
 
-    if (res.status === 401) {
-      API.clearToken();
-      window.location.href = '/login.html';
-      return;
-    }
+    if (fillEl) fillEl.style.width = '100%';
 
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
-    }
-
-    // Успех
     const domains = (data.target_domains || []).join(', ') || '—';
-    resultEl.innerHTML = `
-      <div style="background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.25);
-                  border-radius:8px;padding:.875rem 1rem;margin-top:.5rem">
-        <div style="color:#3fb950;font-weight:600;margin-bottom:.5rem">
-          ✓ Охота запущена — ${escHtml(_stealerFile.name)}
-        </div>
-        <div style="color:var(--text-secondary);font-size:.8125rem;line-height:1.6">
-          Файл: <strong>${escHtml(_stealerFile.name)}</strong>
-          (${(_stealerFile.size / 1048576).toFixed(2)} МБ)<br>
-          Домены для поиска: <code>${escHtml(domains)}</code><br>
-          Парсинг идёт в фоне. Результаты появятся в
-          <button class="btn btn-ghost btn-sm" onclick="switchTab('events')"
-                  style="padding:0;text-decoration:underline;color:var(--accent)">
-            Events → stealer_log
-          </button>
-        </div>
-      </div>`;
-    resultEl.style.display = 'block';
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div style="background:var(--success-bg);border:1px solid rgba(63,185,80,.25);
+                    border-radius:8px;padding:.875rem 1rem;margin-top:.5rem">
+          <div style="color:var(--success);font-weight:600;margin-bottom:.5rem">
+            Охота запущена — ${escHtml(_stealerFile.name)}
+          </div>
+          <div style="color:var(--text-2);font-size:.8125rem;line-height:1.6">
+            Файл: <strong>${escHtml(_stealerFile.name)}</strong>
+            (${(_stealerFile.size / 1048576).toFixed(2)} МБ)<br>
+            Домены: <code>${escHtml(domains)}</code><br>
+            Результаты появятся в
+            <button class="btn btn-secondary btn-sm"
+                    onclick="switchTab('events')"
+                    style="padding:0 4px;text-decoration:underline;color:var(--accent);background:none;border:none">
+              Events → stealer_log
+            </button>
+          </div>
+        </div>`;
+      resultEl.style.display = 'block';
+    }
 
     addScanLog('ok', domains, `stealer upload: ${_stealerFile.name}`);
     Toast.show('success', 'Охота запущена', _stealerFile.name);
 
-    // Сбрасываем выбор файла
+    // Сбрасываем форму и переключаем на Events
     _stealerFile = null;
-    document.getElementById('stealer-file-input').value = '';
+    const fileInput = document.getElementById('stealer-file-input');
+    if (fileInput) fileInput.value = '';
     _updateStealerUI();
 
+    // Автоматически переключаемся на Events через 2 секунды
+    setTimeout(() => switchTab('events'), 2000);
+
   } catch (err) {
-    resultEl.innerHTML = `
-      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);
-                  border-radius:8px;padding:.875rem 1rem;color:#f85149;font-size:.875rem">
-        ✗ ${escHtml(err.message)}
-      </div>`;
-    resultEl.style.display = 'block';
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div style="background:var(--danger-bg);border:1px solid rgba(248,81,73,.25);
+                    border-radius:8px;padding:.875rem 1rem;color:var(--danger);font-size:.875rem">
+          ${escHtml(err.message)}
+        </div>`;
+      resultEl.style.display = 'block';
+    }
     Toast.show('error', 'Ошибка загрузки', err.message);
   } finally {
     setLoading(btn, false);
+    setTimeout(() => {
+      if (progressEl) progressEl.classList.remove('visible');
+      if (fillEl)     fillEl.style.width = '0%';
+    }, 800);
   }
 }
 
@@ -1182,15 +1576,15 @@ async function handleStealerUpload() {
 // ─────────────────────────────────────────────
 
 async function handleStealerSources() {
-  const domainInput   = document.getElementById('sources-domain');
-  const extraTgInput  = document.getElementById('sources-extra-tg');
-  const btn           = document.getElementById('stealer-sources-btn');
-  const resultEl      = document.getElementById('stealer-sources-result');
-  const domain        = domainInput.value.trim();
+  const domainInput  = document.getElementById('sources-domain');
+  const extraTgInput = document.getElementById('sources-extra-tg');
+  const btn          = document.getElementById('stealer-sources-btn');
+  const resultEl     = document.getElementById('stealer-sources-result');
+  const domain       = domainInput?.value.trim() || '';
 
   if (!domain) {
     Toast.show('warning', 'Укажите домен');
-    domainInput.focus();
+    domainInput?.focus();
     return;
   }
 
@@ -1200,60 +1594,113 @@ async function handleStealerSources() {
     : [];
 
   setLoading(btn, true);
-  resultEl.style.display = 'none';
+  if (resultEl) resultEl.style.display = 'none';
 
   try {
-    const res  = await API.request('/api/v1/scan/stealer-sources', {
+    const res = await API.request('/api/v1/scan/stealer-sources', {
       method: 'POST',
       body: JSON.stringify({ domain, extra_tg_channels }),
     });
     if (!res) return;
     const data = await res.json();
 
-    if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
 
     const sources = data.sources || {};
     const rows = Object.entries(sources).map(([k, v]) => {
       const active = !String(v).includes('нет');
       return `<div style="display:flex;justify-content:space-between;padding:.3rem 0;
                           border-bottom:1px solid rgba(255,255,255,.04);font-size:.8125rem">
-        <span style="color:var(--text-secondary)">${escHtml(k)}</span>
-        <span style="color:${active ? '#3fb950' : '#d29922'}">${escHtml(String(v))}</span>
+        <span style="color:var(--text-2)">${escHtml(k)}</span>
+        <span style="color:${active ? 'var(--success)' : 'var(--sev-high)'}">${escHtml(String(v))}</span>
       </div>`;
     }).join('');
 
-    resultEl.innerHTML = `
-      <div style="background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.25);
-                  border-radius:8px;padding:.875rem 1rem;margin-top:.5rem">
-        <div style="color:#58a6ff;font-weight:600;margin-bottom:.5rem">
-          ✓ Запрос отправлен — ${escHtml(domain)}
-        </div>
-        ${rows}
-        <div style="color:var(--text-muted);font-size:.75rem;margin-top:.6rem">
-          Результаты появятся в
-          <button class="btn btn-ghost btn-sm" onclick="switchTab('events')"
-                  style="padding:0;text-decoration:underline;color:var(--accent)">
-            Events → stealer_log
-          </button>
-        </div>
-      </div>`;
-    resultEl.style.display = 'block';
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div style="background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.25);
+                    border-radius:8px;padding:.875rem 1rem;margin-top:.5rem">
+          <div style="color:var(--accent);font-weight:600;margin-bottom:.5rem">
+            Запрос отправлен — ${escHtml(domain)}
+          </div>
+          ${rows}
+          <div style="color:var(--text-muted);font-size:.75rem;margin-top:.6rem">
+            Результаты появятся в Events → stealer_log
+          </div>
+        </div>`;
+      resultEl.style.display = 'block';
+    }
 
     Toast.show('success', 'Источники опрошены', domain);
 
   } catch (err) {
-    resultEl.innerHTML = `
-      <div style="background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);
-                  border-radius:8px;padding:.875rem 1rem;color:#f85149;font-size:.875rem">
-        ✗ ${escHtml(err.message)}
-      </div>`;
-    resultEl.style.display = 'block';
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div style="background:var(--danger-bg);border:1px solid rgba(248,81,73,.25);
+                    border-radius:8px;padding:.875rem 1rem;color:var(--danger);font-size:.875rem">
+          ${escHtml(err.message)}
+        </div>`;
+      resultEl.style.display = 'block';
+    }
     Toast.show('error', 'Ошибка запроса', err.message);
   } finally {
     setLoading(btn, false);
   }
+}
+
+// ─────────────────────────────────────────────
+// Инициализация приложения
+// ─────────────────────────────────────────────
+
+function init() {
+  // Применяем тему до рендера, чтобы не было мигания
+  Theme.init();
+
+  if (!checkAuth()) return;
+
+  // Навигация
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+
+  // Закрытие модалок
+  Modal.bindBackdrop('add-asset-modal');
+
+  // Enter в модальных формах
+  document.querySelectorAll('.modal input').forEach(inp => {
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.target.closest('.modal')?.querySelector('.btn-primary')?.click();
+      }
+    });
+  });
+
+  // Debounce для текстового фильтра Events
+  const filterDomain = document.getElementById('filter-domain');
+  if (filterDomain) {
+    let debounce;
+    filterDomain.addEventListener('input', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(applyEventsFilter, 400);
+    });
+  }
+
+  // Клики на chip-модулях
+  document.querySelectorAll('.module-chip').forEach(chip => {
+    chip.addEventListener('click', () => toggleModule(chip));
+  });
+
+  // Остановка polling при скрытии вкладки браузера
+  document.addEventListener('visibilitychange', () => {
+    // При возвращении — сразу обновить если мы на Events
+    if (!document.hidden) {
+      const eventsActive = document.getElementById('tab-events')?.classList.contains('active');
+      if (eventsActive) loadEventsPage();
+    }
+  });
+
+  // Показываем первый таб
+  switchTab('dashboard');
 }
 
 // Старт после загрузки DOM

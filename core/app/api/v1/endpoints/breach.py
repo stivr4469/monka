@@ -7,13 +7,8 @@
   GET  /breach/results  — последние события email_breach (с фильтром по домену)
 
 Все маршруты требуют JWT-аутентификации.
-Фоновые задачи запускаются в ThreadPoolExecutor (как в github_scan.py).
+Фоновые задачи запускаются в общем ThreadPoolExecutor через workers_client.
 """
-import concurrent.futures
-import os
-import sys
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -21,16 +16,12 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DBDep
 from app.core.config import settings
 from app.models.event import Event
+from app.workers_client import ensure_workers_path, get_executor
 
 router = APIRouter(prefix="/breach", tags=["breach"])
 
-# Пул потоков — воркер синхронный, запускаем без блокировки event loop
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="breach")
-
-# Подключаем workers к sys.path (как в stealer.py и github_scan.py)
-_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
-if _WORKERS_PATH not in sys.path:
-    sys.path.insert(0, _WORKERS_PATH)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.breach_checker import check_domain_emails, discover_and_check
@@ -97,14 +88,6 @@ class BreachEventRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Вспомогательная функция формирования core_api_url ──────────────────────
-
-def _get_core_api_url() -> str:
-    """Формирует базовый URL Core API для вызовов из воркеров."""
-    port = int(os.getenv("APP_PORT", "8000"))
-    return f"http://127.0.0.1:{port}"
-
-
 # ── Эндпоинты ──────────────────────────────────────────────────────────────
 
 @router.post(
@@ -134,9 +117,10 @@ async def check_breach(
             detail="Список email пуст после валидации",
         )
 
-    core_api_url = _get_core_api_url()
+    # Берём порт из settings — единственный источник истины
+    core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    _executor.submit(
+    get_executor().submit(
         check_domain_emails,
         body.domain,
         body.emails,
@@ -176,9 +160,9 @@ async def discover_breach(
             detail="Breach checker недоступен (workers не найдены)",
         )
 
-    core_api_url = _get_core_api_url()
+    core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    _executor.submit(
+    get_executor().submit(
         discover_and_check,
         body.domain,
         core_api_url,

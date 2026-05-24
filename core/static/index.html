@@ -24,6 +24,13 @@
       <span class="refresh-dot"></span>
       <span>Обновление через <span id="refresh-count">30</span>с</span>
     </div>
+
+    <!-- Переключатель темы -->
+    <button class="theme-toggle" id="theme-toggle-btn"
+            onclick="Theme.toggle()" title="Переключить тему" aria-label="Переключить тему">
+      ☀️
+    </button>
+
     <button class="btn btn-secondary btn-sm" onclick="handleLogout()">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M5 2H2.5A1.5 1.5 0 0 0 1 3.5v7A1.5 1.5 0 0 0 2.5 12H5M9.5 9.5L13 7M13 7l-3.5-2.5M13 7H5"
@@ -76,6 +83,16 @@
     </svg>
     Scan
   </button>
+  <!-- Вкладка Darknet -->
+  <button class="nav-tab" data-tab="darknet">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
+      <path d="M8 2C8 2 5 4.5 5 8s3 6 3 6M8 2c0 0 3 2.5 3 6s-3 6-3 6"
+            stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+      <path d="M2 6.5h12M2 9.5h12" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+    </svg>
+    Darknet
+  </button>
 </nav>
 
 <!-- ===== MAIN CONTENT ===== -->
@@ -105,6 +122,26 @@
         <div class="label">Medium</div>
         <div class="value" id="stat-medium">—</div>
         <div class="sublabel">Средний приоритет</div>
+      </div>
+    </div>
+
+    <!-- Risk Score виджет -->
+    <div class="risk-score-widget" id="risk-score-widget">
+      <div class="risk-dial" aria-label="Оценка риска">
+        <svg viewBox="0 0 80 80" aria-hidden="true">
+          <!-- Трек (фон) -->
+          <circle class="risk-dial-track" cx="40" cy="40" r="32"/>
+          <!-- Заполненная дуга -->
+          <circle class="risk-dial-fill" cx="40" cy="40" r="32"/>
+        </svg>
+        <div class="risk-dial-label">
+          <span class="risk-dial-value" style="color:var(--text-muted)">—</span>
+          <span class="risk-dial-unit">риск</span>
+        </div>
+      </div>
+      <div class="risk-score-info">
+        <div class="risk-score-title">Risk Score</div>
+        <div class="risk-score-desc">Загрузка данных…</div>
       </div>
     </div>
 
@@ -139,7 +176,7 @@
           <div class="section-title">Последние события</div>
           <div class="section-subtitle">10 свежих событий. Нажмите строку — раскроется payload.</div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="renderDashboard()">
+        <button class="btn btn-secondary btn-sm btn-refresh" onclick="renderDashboard()">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
             <path d="M6.5 1.5A5 5 0 1 1 1.5 6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
             <path d="M1.5 1.5V6.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -147,7 +184,7 @@
           Обновить
         </button>
       </div>
-      <div class="table-wrapper">
+      <div class="table-wrapper" style="border-radius:var(--radius-md) var(--radius-md) 0 0;border-bottom:none">
         <table>
           <thead>
             <tr>
@@ -161,15 +198,14 @@
           </tbody>
         </table>
       </div>
+      <!-- Строка «последнее обновление» -->
+      <div class="table-footer-meta">
+        <span class="refresh-dot"></span>
+        Авто-обновление каждые 30 секунд. Следующее через
+        <strong id="refresh-label" style="color:var(--text-2)">—</strong>&nbsp;с
+      </div>
     </div>
 
-    <!-- Авто-обновление footer -->
-    <div style="margin-top:1rem;display:flex;align-items:center;gap:.75rem;
-                color:var(--text-muted);font-size:.8125rem">
-      <span class="refresh-dot"></span>
-      Авто-обновление каждые 30 секунд. Следующее через
-      <strong id="refresh-label" style="color:var(--text-secondary)">—</strong> с
-    </div>
   </div>
 
   <!-- ══════ TAB: Assets ══════ -->
@@ -199,7 +235,7 @@
         <div class="section-title">Events</div>
         <div class="section-subtitle">Нажмите строку — раскроется payload JSON</div>
       </div>
-      <button class="btn btn-secondary btn-sm" onclick="loadEventsPage()">
+      <button class="btn btn-secondary btn-sm btn-refresh" onclick="loadEventsPage()">
         <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
           <path d="M6.5 1.5A5 5 0 1 1 1.5 6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
           <path d="M1.5 1.5V6.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -228,6 +264,7 @@
         <option value="stealer_log">stealer_log</option>
         <option value="github_leak">github_leak</option>
         <option value="paste_leak">paste_leak</option>
+        <option value="darknet_mention">darknet_mention</option>
       </select>
       <input type="text" id="filter-domain" placeholder="Домен…" style="min-width:200px">
       <button class="btn btn-secondary btn-sm" onclick="clearEventsFilter()">
@@ -254,6 +291,13 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Строка «последнее обновление» под таблицей -->
+    <div class="table-footer-meta">
+      <span class="refresh-dot"></span>
+      <span id="events-last-updated" style="color:var(--text-muted)">Ожидание первой загрузки…</span>
+    </div>
+
     <div class="pagination">
       <span class="pagination-info" id="pagination-info">—</span>
       <div class="pagination-controls" id="pagination-controls"></div>
@@ -273,7 +317,7 @@
       <!-- Список правил -->
       <div>
         <div style="margin-bottom:.75rem;display:flex;align-items:center;justify-content:space-between">
-          <span style="font-size:.875rem;color:var(--text-secondary);font-weight:600">Правила</span>
+          <span style="font-size:.875rem;color:var(--text-2);font-weight:600">Правила</span>
           <button class="btn btn-secondary btn-sm" onclick="renderAlerts()">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -429,8 +473,7 @@
       </div>
     </div>
 
-    <div class="scan-form-card" id="stealer-card"
-         style="border-color:rgba(248,81,73,.25)">
+    <div class="scan-form-card" id="stealer-card" style="border-color:rgba(248,81,73,.25)">
       <div class="form-group">
         <label>Файл стилер-лога</label>
         <div id="stealer-drop-zone" class="stealer-drop-zone"
@@ -447,16 +490,22 @@
           <div id="stealer-drop-label" style="color:var(--text-muted);font-size:.875rem">
             Перетащите ZIP / TXT или <span style="color:var(--accent);cursor:pointer">выберите файл</span>
           </div>
-          <div id="stealer-file-info" style="font-size:.8125rem;color:var(--text-secondary);margin-top:.25rem"></div>
+          <div id="stealer-file-info"
+               style="font-size:.8125rem;color:var(--text-2);margin-top:.25rem"></div>
         </div>
         <input type="file" id="stealer-file-input" accept=".zip,.txt,.log,.csv"
                style="display:none" onchange="handleStealerFileSelect(this)">
       </div>
 
+      <!-- Прогресс-бар загрузки -->
+      <div class="upload-progress" id="stealer-progress">
+        <div class="upload-progress-fill" id="stealer-progress-fill"></div>
+      </div>
+
       <div class="form-group">
         <label for="stealer-domains">Домены для поиска (необязательно)</label>
         <input type="text" id="stealer-domains" class="form-input"
-               placeholder="example.com, subdomain.example.com — пусто = все активы организации">
+               placeholder="example.com, subdomain.example.com — пусто = все активы">
         <span style="font-size:.75rem;color:var(--text-muted);margin-top:.25rem;display:block">
           Если не указать — берутся все активные домены вашей организации
         </span>
@@ -466,7 +515,7 @@
               onclick="handleStealerUpload()" disabled
               style="width:100%;justify-content:center">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M7 1L2 4v4c0 2.8 2 5.4 5 6 3-0.6 5-3.2 5-6V4L7 1z"
+          <path d="M7 1L2 4v4c0 2.8 2 5.4 5 6 3-.6 5-3.2 5-6V4L7 1z"
                 fill="rgba(248,81,73,.2)" stroke="currentColor" stroke-width="1.3"
                 stroke-linejoin="round"/>
           <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.2"/>
@@ -484,9 +533,8 @@
         <div class="section-title" style="font-size:1rem">
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none"
                style="vertical-align:middle;margin-right:.4rem">
-            <circle cx="7.5" cy="7.5" r="6" stroke="#58a6ff" stroke-width="1.3"/>
-            <path d="M5 7.5h5M7.5 5v5" stroke="#58a6ff" stroke-width="1.5"
-                  stroke-linecap="round"/>
+            <circle cx="7.5" cy="7.5" r="6" stroke="#6366f1" stroke-width="1.3"/>
+            <path d="M5 7.5h5M7.5 5v5" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
           Проверить по источникам
         </div>
@@ -498,7 +546,7 @@
     </div>
 
     <div class="scan-form-card" id="stealer-sources-card"
-         style="border-color:rgba(88,166,255,.25)">
+         style="border-color:rgba(99,102,241,.25)">
       <div class="form-group">
         <label for="sources-domain">Домен</label>
         <input type="text" id="sources-domain" class="form-input"
@@ -518,7 +566,7 @@
         <input type="text" id="sources-extra-tg" class="form-input"
                placeholder="@channel1, channel2 — добавятся к встроенному списку">
         <span style="font-size:.75rem;color:var(--text-muted);margin-top:.25rem;display:block">
-          Требует Telethon: <code>TELEGRAM_API_ID</code> + <code>TELEGRAM_API_HASH</code> в .env (my.telegram.org)
+          Требует Telethon: <code>TELEGRAM_API_ID</code> + <code>TELEGRAM_API_HASH</code> в .env
         </span>
       </div>
 
@@ -533,7 +581,144 @@
         Запросить источники
       </button>
 
-      <div id="stealer-sources-result" style="margin-top:.75rem;font-size:.875rem;display:none"></div>
+      <div id="stealer-sources-result"
+           style="margin-top:.75rem;font-size:.875rem;display:none"></div>
+    </div>
+  </div>
+
+  <!-- ══════ TAB: Darknet ══════ -->
+  <div class="tab-pane" id="tab-darknet" role="tabpanel">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Darknet Monitoring</div>
+        <div class="section-subtitle">
+          Мониторинг утечек в Darknet: ransomware-сайты, форумы, Tor-ресурсы
+        </div>
+      </div>
+    </div>
+
+    <!-- Форма запуска мониторинга -->
+    <div class="scan-form-card" style="border-color:rgba(110,70,220,.3)">
+      <div class="form-group">
+        <label for="darknet-domain">Домен для мониторинга</label>
+        <input type="text" id="darknet-domain"
+               placeholder="example.com" autocomplete="off">
+      </div>
+      <button class="btn btn-primary" id="darknet-scan-btn"
+              onclick="handleDarknetScan()"
+              style="width:100%;justify-content:center">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Запустить мониторинг
+      </button>
+      <div id="darknet-scan-status" style="margin-top:.75rem;display:none"></div>
+    </div>
+
+    <!-- Список источников с бейджами статусов -->
+    <div class="section-header" style="margin-bottom:.75rem">
+      <div>
+        <div class="section-title" style="font-size:1rem">Источники мониторинга</div>
+        <div class="section-subtitle">Поддерживаемые Darknet-ресурсы</div>
+      </div>
+    </div>
+
+    <div class="darknet-sources-grid">
+      <!-- RansomWatch -->
+      <div class="darknet-source-card">
+        <div class="darknet-source-icon free">🔍</div>
+        <div>
+          <div class="darknet-source-name">RansomWatch</div>
+          <div class="darknet-source-meta">
+            <span class="badge badge-success" style="font-size:.65rem">Бесплатно</span>
+            Мониторинг ransomware-сайтов
+          </div>
+        </div>
+      </div>
+
+      <!-- Ahmia.fi -->
+      <div class="darknet-source-card">
+        <div class="darknet-source-icon free">🌐</div>
+        <div>
+          <div class="darknet-source-name">Ahmia.fi</div>
+          <div class="darknet-source-meta">
+            <span class="badge badge-success" style="font-size:.65rem">Бесплатно</span>
+            Поиск в Tor-сети
+          </div>
+        </div>
+      </div>
+
+      <!-- IntelX.io -->
+      <div class="darknet-source-card">
+        <div class="darknet-source-icon api">🔑</div>
+        <div>
+          <div class="darknet-source-name">IntelX.io</div>
+          <div class="darknet-source-meta">
+            <span class="badge badge-api" style="font-size:.65rem">API</span>
+            Инцидент-разведка
+          </div>
+        </div>
+      </div>
+
+      <!-- Ransomware Sites via Tor -->
+      <div class="darknet-source-card">
+        <div class="darknet-source-icon tor">🧅</div>
+        <div>
+          <div class="darknet-source-name">Ransomware Sites via Tor</div>
+          <div class="darknet-source-meta">
+            <span class="badge badge-tor" style="font-size:.65rem">Tor</span>
+            Прямой доступ через Tor
+          </div>
+        </div>
+      </div>
+
+      <!-- Telegram каналы -->
+      <div class="darknet-source-card">
+        <div class="darknet-source-icon mtproto">📡</div>
+        <div>
+          <div class="darknet-source-name">Telegram каналы</div>
+          <div class="darknet-source-meta">
+            <span class="badge badge-mtproto" style="font-size:.65rem">MTProto</span>
+            Каналы утечек и продаж
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Таблица darknet-событий -->
+    <div class="section-header" style="margin-bottom:.75rem">
+      <div>
+        <div class="section-title" style="font-size:1rem">Darknet события</div>
+        <div class="section-subtitle">Обнаруженные упоминания в Darknet</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="loadDarknetEvents('')">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 1.5A4.5 4.5 0 1 1 1.5 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M1.5 1.5V6h4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Обновить
+      </button>
+    </div>
+
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Severity</th>
+            <th>Domain</th>
+            <th>Источник</th>
+            <th>Обнаружено</th>
+            <th>Фрагмент</th>
+          </tr>
+        </thead>
+        <tbody id="darknet-events-tbody">
+          <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">
+            Запустите мониторинг для домена или обновите таблицу
+          </td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -552,7 +737,8 @@
       </button>
     </div>
     <div class="modal-body">
-      <form id="add-asset-form" novalidate onsubmit="event.preventDefault(); submitAddAsset()">
+      <form id="add-asset-form" novalidate
+            onsubmit="event.preventDefault(); submitAddAsset()">
         <div class="form-group">
           <label for="asset-domain-input">
             Домен <span style="color:var(--sev-critical)">*</span>
@@ -581,74 +767,10 @@
   </div>
 </div>
 
-<!-- Toast container -->
+<!-- Toast container — правый нижний угол -->
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <script src="/app.js"></script>
-
-<script>
-  /* Патч: добавляем severity chart не трогая app.js */
-  (function () {
-    var _orig = window.renderStats;
-    window.renderStats = function (stats) {
-      _orig(stats);
-
-      var bySev   = (stats && stats.by_severity) || {};
-      var chartEl = document.getElementById('severity-chart');
-      if (!chartEl) return;
-
-      var order  = ['critical', 'high', 'medium', 'low', 'info'];
-      var colors = {
-        critical: 'var(--sev-critical)',
-        high:     'var(--sev-high)',
-        medium:   'var(--sev-medium)',
-        low:      'var(--sev-low)',
-        info:     'var(--sev-info)'
-      };
-
-      var entries = order
-        .map(function (k) { return [k, bySev[k] || 0]; })
-        .filter(function (p) { return p[1] > 0; });
-
-      var maxVal = entries.length ? entries[0][1] : 1;
-
-      if (!entries.length) {
-        chartEl.innerHTML =
-          '<div class="empty-state" style="padding:1rem"><p>Нет данных</p></div>';
-        return;
-      }
-
-      chartEl.innerHTML = entries.map(function (pair) {
-        var sev   = pair[0];
-        var count = pair[1];
-        var pct   = Math.max(2, Math.round((count / maxVal) * 100));
-        var label = sev.charAt(0).toUpperCase() + sev.slice(1);
-        return '<div class="bar-row">'
-          + '<span class="bar-label">' + label + '</span>'
-          + '<div class="bar-track">'
-          + '<div class="bar-fill" style="width:' + pct + '%;background:' + colors[sev] + '"></div>'
-          + '</div>'
-          + '<span class="bar-count">' + count.toLocaleString('ru') + '</span>'
-          + '</div>';
-      }).join('');
-    };
-
-    /* Обновляем label авто-обновления */
-    var _origCounter = window.updateRefreshCounter;
-    window.updateRefreshCounter = function () {
-      _origCounter && _origCounter();
-      var lbl = document.getElementById('refresh-label');
-      if (lbl && window.State) lbl.textContent = State.refreshCountdown;
-
-      var indicator = document.getElementById('refresh-indicator');
-      if (indicator) {
-        var isActive =
-          document.getElementById('tab-dashboard').classList.contains('active');
-        indicator.style.display = isActive ? 'flex' : 'none';
-      }
-    };
-  }());
-</script>
 
 </body>
 </html>

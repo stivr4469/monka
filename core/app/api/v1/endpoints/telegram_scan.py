@@ -4,27 +4,20 @@
 Запускает monitor_telegram_channels в фоне (ThreadPoolExecutor).
 Результаты появятся в /api/v1/events/?event_type=telegram_leak
 """
-import concurrent.futures
-import sys
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
+from app.core.rate_limit import limiter
+from app.workers_client import ensure_workers_path, get_executor
 
 router = APIRouter(prefix="/scan", tags=["scan"])
 
-# Пул потоков для фоновых задач — max_workers=4 позволяет параллельно
-# сканировать несколько доменов без блокировки event loop FastAPI
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-
-# Добавляем workers/ в sys.path чтобы импортировать tasks.telegram_monitor
-_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
-if _WORKERS_PATH not in sys.path:
-    sys.path.insert(0, _WORKERS_PATH)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.telegram_monitor import DEFAULT_LEAK_CHANNELS, monitor_telegram_channels
@@ -74,7 +67,9 @@ class TelegramScanResponse(BaseModel):
     response_model=TelegramScanResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("20/minute")  # Ограничение запуска сканирований: 20 в минуту с IP
 async def trigger_telegram_scan(
+    request: Request,  # slowapi требует request для извлечения IP
     body: TelegramScanRequest,
     current_user: CurrentUser,
 ) -> TelegramScanResponse:
@@ -102,7 +97,7 @@ async def trigger_telegram_scan(
     # Общее количество каналов для информирования пользователя
     total_channels = len(DEFAULT_LEAK_CHANNELS) + len(extra_channels or [])
 
-    _executor.submit(
+    get_executor().submit(
         monitor_telegram_channels,
         domain,
         core_api_url,

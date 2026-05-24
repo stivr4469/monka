@@ -5,30 +5,24 @@
 Результаты появятся в /api/v1/events/?event_type=darknet_mention
 
 Источники:
-  - RansomWatch  → severity "critical"
-  - Ahmia.fi     → severity "high"
-  - DarkSearch   → severity "high"
+  - RansomWatch        → event_type "darknet_mention",    severity "critical"
+  - Ahmia.fi           → event_type "darknet_mention",    severity "high"
+  - DarkSearch         → event_type "darknet_mention",    severity "high"
+  - Ransomware Sites   → event_type "ransomware_mention", severity "critical" (требует Tor)
+  - IntelX.io phonebook→ event_type "forum_mention",      severity "high"
 """
-import concurrent.futures
-import sys
-from pathlib import Path
-
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
+from app.core.rate_limit import limiter
+from app.workers_client import ensure_workers_path, get_executor
 
 router = APIRouter(prefix="/scan", tags=["scan"])
 
-# Пул потоков: max_workers=4 — достаточно для параллельного сканирования
-# нескольких доменов без блокировки event loop FastAPI
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-
-# Добавляем workers/ в sys.path — паттерн аналогичен paste_scan.py / github_scan.py
-_WORKERS_PATH = str(Path(__file__).parents[5] / "workers")
-if _WORKERS_PATH not in sys.path:
-    sys.path.insert(0, _WORKERS_PATH)
+# Подключаем workers/ к sys.path через единый синглтон
+ensure_workers_path()
 
 try:
     from tasks.darknet_monitor import monitor_darknet
@@ -71,11 +65,14 @@ class DarknetScanResponse(BaseModel):
     summary="Запуск мониторинга даркнета",
     description=(
         "Запускает асинхронный мониторинг упоминаний домена в индексах даркнета. "
-        "Источники: RansomWatch (critical), Ahmia.fi (high), DarkSearch (high). "
-        "Результаты доступны через /api/v1/events/?event_type=darknet_mention"
+        "Источники: RansomWatch (critical), Ahmia.fi (high), DarkSearch (high), "
+        "Ransomware Sites через Tor (critical, если Tor доступен), IntelX.io (high). "
+        "Результаты доступны через /api/v1/events/?event_type=darknet_mention|ransomware_mention|forum_mention"
     ),
 )
+@limiter.limit("20/minute")  # Ограничение запуска сканирований: 20 в минуту с IP
 async def trigger_darknet_scan(
+    request: Request,  # slowapi требует request для извлечения IP
     body: DarknetScanRequest,
     current_user: CurrentUser,
 ) -> DarknetScanResponse:
@@ -96,7 +93,7 @@ async def trigger_darknet_scan(
     # URL Core API — воркер использует его для ingest событий через внутренний эндпоинт
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    _executor.submit(
+    get_executor().submit(
         monitor_darknet,
         domain,
         core_api_url,
