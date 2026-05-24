@@ -39,6 +39,59 @@ def _is_cred_event(source_type: str | None, event_type: str | None) -> bool:
     )
 
 
+def _auto_condition(event_type: str, payload: dict) -> str | None:
+    """
+    9.H.3: Авто-генерация текстового условия для снятия штрафа Risk Score.
+
+    Возвращает строку с рекомендацией по устранению угрозы или None
+    если для данного типа события условие не определено.
+    """
+    # Открытый сетевой сервис — указываем конкретный порт и хост
+    if event_type == "exposed_service":
+        port = payload.get("port", "?")
+        host = payload.get("host", "")
+        return f"Закройте порт {port} на хосте {host}" if host else f"Закройте порт {port}"
+
+    # Утечки учётных данных — смена пароля обязательна
+    if event_type in ("credential_leak", "stealer_log"):
+        return "Смените скомпрометированный пароль"
+
+    # Активная сессия — принудительный logout
+    if event_type == "active_session_leak":
+        return "Завершите активную сессию — принудительный logout"
+
+    # Фишинговый домен — блокировка через регистратора
+    if event_type == "phishing_domain":
+        return "Заблокируйте фишинговый домен через регистратора"
+
+    # Захват поддомена — удалить или исправить CNAME
+    if event_type == "subdomain_takeover":
+        return "Удалите или обновите CNAME-запись поддомена"
+
+    # Истекающий TLS-сертификат
+    if event_type == "tls_expiry":
+        return "Обновите TLS-сертификат до истечения срока"
+
+    # Публичный S3-bucket
+    if event_type == "open_s3_bucket":
+        return "Закройте публичный доступ к S3-bucket"
+
+    # Дрейф конфигурации инфраструктуры
+    if event_type == "asset_drift":
+        return "Проверьте изменения в конфигурации инфраструктуры"
+
+    # Упоминание в даркнете — требует расследования
+    if event_type == "darknet_mention":
+        return "Проведите расследование упоминания в даркнете"
+
+    # Утечка секретов/ключей в GitHub
+    if event_type == "github_secret_leak":
+        return "Немедленно ротируйте скомпрометированные ключи/секреты"
+
+    # Для остальных типов событий условие не генерируется
+    return None
+
+
 # Подключаем workers/ к sys.path через единый синглтон
 ensure_workers_path()
 
@@ -88,6 +141,9 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         )
         org = org_result.scalar_one_or_none()
 
+    # 9.H.3: Авто-генерируем condition если явно не передан
+    condition = event.condition or _auto_condition(event.event_type, event.payload)
+
     db_event = Event(
         event_type=event.event_type,
         severity=event.severity,
@@ -98,6 +154,7 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         detected_at=event.detected_at,
         dedup_hash=event.dedup_hash,
         asset_id=asset.id if asset else None,
+        condition=condition,
     )
     db.add(db_event)
 
@@ -206,6 +263,8 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             continue
 
         asset = domain_to_asset.get(event.target_domain or "")
+        # 9.H.3: Авто-генерируем condition если явно не передан
+        condition = event.condition or _auto_condition(event.event_type, event.payload)
         db_event = Event(
             event_type=event.event_type,
             severity=event.severity,
@@ -216,6 +275,7 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             detected_at=event.detected_at,
             dedup_hash=event.dedup_hash,
             asset_id=asset.id if asset else None,
+            condition=condition,
         )
         new_events.append(db_event)
 

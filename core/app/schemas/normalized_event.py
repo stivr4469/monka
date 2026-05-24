@@ -57,6 +57,10 @@ class NormalizedEvent(BaseModel):
     # Вычисляется автоматически для дедупликации
     dedup_hash: str | None = Field(default=None, exclude=True)
 
+    # 9.H.3: Условие для снятия штрафа Risk Score.
+    # Может быть передано явно или проставлено автоматически в ingest.
+    condition: str | None = None
+
     @model_validator(mode="after")
     def compute_dedup_hash(self) -> "NormalizedEvent":
         # Хэш считается от (event_type + target_domain + source_name + json(payload sorted_keys))

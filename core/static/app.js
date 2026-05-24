@@ -642,8 +642,9 @@ function riskScoreColor(score) {
 /**
  * Анимирует круговой индикатор Risk Score.
  * @param {number|null} score — число 0-100 или null (N/A)
+ * @param {Array|null} breakdown — массив RiskEventItem из API (9.H.4)
  */
-function renderRiskScore(score) {
+function renderRiskScore(score, breakdown) {
   const widget = document.getElementById('risk-score-widget');
   if (!widget) return;
 
@@ -656,6 +657,7 @@ function renderRiskScore(score) {
     if (value) value.textContent = 'N/A';
     if (desc)  desc.textContent  = 'Нет данных о риске';
     if (fill)  fill.style.stroke = 'var(--text-muted)';
+    _renderRiskBreakdown([]);
     return;
   }
 
@@ -676,6 +678,70 @@ function renderRiskScore(score) {
   const labels = ['Низкий', 'Средний', 'Высокий', 'Критический'];
   const idx = clamped <= 30 ? 0 : clamped <= 60 ? 1 : clamped <= 80 ? 2 : 3;
   if (desc) desc.textContent = `Уровень риска: ${labels[idx]}`;
+
+  // 9.H.4: Отображаем список штрафов с условиями устранения
+  _renderRiskBreakdown(breakdown || []);
+}
+
+/**
+ * 9.H.4: Отображает список штрафов Risk Score с условиями устранения.
+ * Показывает только события у которых есть condition (не null).
+ * @param {Array} breakdown — массив RiskEventItem
+ */
+function _renderRiskBreakdown(breakdown) {
+  const container = document.getElementById('risk-breakdown');
+  if (!container) return;
+
+  // Фильтруем только события с условием устранения
+  const withCondition = breakdown.filter(item => item.condition);
+
+  if (withCondition.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  // Ограничиваем топ-5 по вкладу (уже отсортированы API по убыванию contribution)
+  const top = withCondition.slice(0, 5);
+
+  const badges = top.map(item => {
+    // Цвет badge зависит от severity
+    const sevColors = {
+      critical: '#ff4444',
+      high:     '#ff8800',
+      medium:   '#ffbb00',
+      low:      '#44aaff',
+      info:     '#888888',
+    };
+    const color = sevColors[item.severity] || sevColors.info;
+
+    return `<div class="risk-condition-badge" style="
+      display:flex;align-items:flex-start;gap:4px;
+      margin-top:5px;font-size:0.72rem;line-height:1.35;
+      padding:4px 6px;border-radius:5px;
+      background:color-mix(in srgb,${color} 12%,transparent);
+      border-left:2px solid ${color};
+      color:var(--text-secondary,#555);
+    ">
+      <span style="flex-shrink:0;margin-top:1px">⚠️</span>
+      <span><strong style="color:${color}">До устранения:</strong> ${escapeHtml(item.condition)}</span>
+    </div>`;
+  }).join('');
+
+  container.innerHTML = `<div style="margin-top:8px">${badges}</div>`;
+}
+
+/**
+ * Экранирует HTML-спецсимволы для безопасной вставки в innerHTML.
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ─────────────────────────────────────────────
@@ -694,9 +760,10 @@ async function renderDashboard() {
     // Если есть активы — берём risk score первого
     if (State.assetsData && State.assetsData.length > 0) {
       const data = await API.getRiskScore(State.assetsData[0].id);
-      renderRiskScore(data ? data.score : null);
+      // 9.H.4: передаём breakdown для отображения условий устранения
+      renderRiskScore(data ? data.score : null, data ? data.breakdown : null);
     } else {
-      renderRiskScore(null);
+      renderRiskScore(null, null);
     }
   } catch (e) {
     Toast.show('error', 'Ошибка загрузки', e.message);
@@ -2497,6 +2564,154 @@ function _attackPathCardHtml(p) {
         <span class="attack-path-score-label">риск</span>
       </div>
     </div>`;
+}
+
+// ─────────────────────────────────────────────
+// 9.E.10: Vis.js Network — граф-визуализация
+// ─────────────────────────────────────────────
+
+/**
+ * Загружает данные из /api/v1/graph/{domain}/visualization
+ * и строит интерактивный граф через Vis.js Network.
+ * Вызывается кнопкой «Построить граф» / «🕸️ Граф».
+ */
+async function loadGraphVisualization() {
+  const inputEl    = document.getElementById('graph-domain-input');
+  const container  = document.getElementById('graph-network-canvas');
+  const placeholder = document.getElementById('graph-network-placeholder');
+  const legend     = document.getElementById('graph-network-legend');
+
+  if (!container) return;
+
+  const domain = inputEl ? inputEl.value.trim() : '';
+  if (!domain) {
+    placeholder.textContent = 'Введите домен в поле выше';
+    placeholder.style.display = 'block';
+    container.style.display = 'none';
+    return;
+  }
+
+  // Показываем индикатор загрузки
+  placeholder.textContent = 'Загрузка данных графа…';
+  placeholder.style.display = 'block';
+  container.style.display = 'none';
+  if (legend) legend.style.display = 'none';
+
+  try {
+    const res = await API.request(
+      `/api/v1/graph/${encodeURIComponent(domain)}/visualization`
+    );
+
+    // Graceful degradation — Neo4j недоступен или домен не найден
+    if (!res || !res.ok) {
+      placeholder.textContent =
+        res && res.status === 404
+          ? `Домен «${escHtml(domain)}» не найден в графе. Запустите сканирование.`
+          : 'Граф недоступен — Neo4j не подключён или вернул ошибку.';
+      return;
+    }
+
+    const data  = await res.json();
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+
+    if (!nodes.length) {
+      placeholder.textContent =
+        `Нет данных для домена «${escHtml(domain)}». Запустите сканирование.`;
+      return;
+    }
+
+    // Цветовая схема по типу ноды
+    const NODE_COLORS = {
+      Domain:         { background: '#1e3a5f', border: '#60a5fa', font: { color: '#60a5fa' } },
+      Asset:          { background: '#14532d', border: '#34d399', font: { color: '#34d399' } },
+      IPAddress:      { background: '#292524', border: '#d4a76a', font: { color: '#d4a76a' } },
+      Port:           { background: '#451a03', border: '#fbbf24', font: { color: '#fbbf24' } },
+      Vulnerability:  { background: '#3b0764', border: '#f87171', font: { color: '#f87171' } },
+      CredentialLeak: { background: '#4a044e', border: '#c084fc', font: { color: '#c084fc' } },
+      StealerLog:     { background: '#4c0519', border: '#fb7185', font: { color: '#fb7185' } },
+    };
+
+    // Формируем датасеты Vis.js
+    const visNodes = new vis.DataSet(nodes.map(n => {
+      const colors = NODE_COLORS[n.type] || { background: '#374151', border: '#9ca3af' };
+      const label  = (n.label || '').length > 22
+        ? (n.label || '').slice(0, 20) + '…'
+        : (n.label || '');
+      return {
+        id:    n.id,
+        label,
+        title: n.label,   // tooltip при наведении
+        shape: n.type === 'Domain'
+          ? 'star'
+          : n.type === 'Port'
+            ? 'diamond'
+            : 'dot',
+        size:  n.type === 'Domain' ? 22
+          : n.type === 'CredentialLeak' || n.type === 'StealerLog' ? 18
+          : 14,
+        color: colors,
+        font:  colors.font || { color: '#9ca3af' },
+      };
+    }));
+
+    const visEdges = new vis.DataSet(edges.map((e, i) => ({
+      id:     i,
+      from:   e.source,
+      to:     e.target,
+      label:  e.label || '',
+      font:   { color: '#6b7280', size: 10, align: 'middle' },
+      color:  { color: '#374151', highlight: '#60a5fa', hover: '#60a5fa' },
+      arrows: 'to',
+      smooth: { type: 'curvedCW', roundness: 0.2 },
+    })));
+
+    // Настройки физического движка и взаимодействия
+    const options = {
+      physics: {
+        enabled: true,
+        forceAtlas2Based: {
+          gravitationalConstant: -60,
+          centralGravity:        0.01,
+          springLength:          120,
+          springConstant:        0.08,
+        },
+        solver:        'forceAtlas2Based',
+        stabilization: { iterations: 150, updateInterval: 25 },
+      },
+      interaction: {
+        hover:        true,
+        tooltipDelay: 100,
+        zoomView:     true,
+        dragView:     true,
+      },
+      layout: { improvedLayout: true },
+    };
+
+    // Переключаем отображение: скрываем placeholder, показываем canvas
+    placeholder.style.display = 'none';
+    container.style.display   = 'block';
+    if (legend) legend.style.display = 'flex';
+
+    // Уничтожаем предыдущий граф — защита от утечек памяти
+    if (window._visNetwork) {
+      window._visNetwork.destroy();
+      window._visNetwork = null;
+    }
+
+    // Создаём новый граф
+    window._visNetwork = new vis.Network(
+      container,
+      { nodes: visNodes, edges: visEdges },
+      options
+    );
+
+  } catch (err) {
+    placeholder.textContent = 'Ошибка: ' + err.message;
+    placeholder.style.display = 'block';
+    container.style.display   = 'none';
+    if (legend) legend.style.display = 'none';
+  }
 }
 
 // ─────────────────────────────────────────────

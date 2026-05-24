@@ -138,6 +138,8 @@ class RiskEventItem(BaseModel):
     weight: float            # W(severity)
     decay: float             # T(delta_days) = exp(-0.003 * delta_days)
     contribution: float      # W × T × A
+    # 9.H.3: Условие для снятия штрафа (что нужно сделать)
+    condition: str | None = None
 
 
 class RiskScoreResponse(BaseModel):
@@ -149,6 +151,8 @@ class RiskScoreResponse(BaseModel):
     importance: float        # A(importance) актива
     total_penalty: float     # Σ W(sev) × T(t) × A — сумма штрафов до зажима
     event_count: int         # количество событий, попавших в формулу
+    # 9.H.4: Список событий с их вкладом и условием устранения
+    breakdown: list[RiskEventItem] = []
 
 
 # Веса severity (BRD new_vision.md, λ=0.003)
@@ -233,9 +237,10 @@ async def get_risk_score(
     # Коэффициент важности — graceful fallback на 1.0 если поле отсутствует
     importance: float = getattr(asset, "importance", None) or 1.0
 
-    # Загружаем все события актива (без ограничения по окну — затухание само гасит старые)
+    # Загружаем все события актива (без ограничения по окну — затухание само гасит старые).
+    # 9.H.4: Добавляем Event.condition в SELECT для формирования breakdown.
     events_result = await db.execute(
-        select(Event.id, Event.severity, Event.detected_at)
+        select(Event.id, Event.severity, Event.detected_at, Event.condition)
         .where(
             Event.asset_id == asset_id,
             Event.severity.in_(list(_SEVERITY_WEIGHTS.keys())),
@@ -244,10 +249,36 @@ async def get_risk_score(
     events = events_result.all()
 
     now = datetime.now(timezone.utc)
-    total_penalty: float = sum(
-        _calc_risk_penalty(ev.severity, ev.detected_at, importance, now)
-        for ev in events
-    )
+
+    # 9.H.4: Строим список RiskEventItem с детализацией по каждому событию
+    breakdown: list[RiskEventItem] = []
+    total_penalty: float = 0.0
+
+    for ev in events:
+        weight = _SEVERITY_WEIGHTS.get(ev.severity.lower(), 0.0)
+        if weight == 0.0:
+            continue
+        detected = ev.detected_at
+        if detected.tzinfo is None:
+            detected = detected.replace(tzinfo=timezone.utc)
+        delta_days = max(0.0, (now - detected).total_seconds() / 86400.0)
+        decay = math.exp(-_DECAY_RATE * delta_days)
+        contribution = weight * decay * importance
+        total_penalty += contribution
+
+        breakdown.append(RiskEventItem(
+            event_id=ev.id,
+            severity=ev.severity,
+            detected_at=ev.detected_at,
+            delta_days=round(delta_days, 2),
+            weight=weight,
+            decay=round(decay, 6),
+            contribution=round(contribution, 4),
+            condition=ev.condition,
+        ))
+
+    # Сортируем breakdown по убыванию вклада — самые опасные первыми
+    breakdown.sort(key=lambda x: x.contribution, reverse=True)
 
     # Итоговый score: 100 минус сумма штрафов, зажатый в [0, 100]
     raw_score: float = 100.0 - total_penalty
@@ -261,6 +292,7 @@ async def get_risk_score(
         importance=importance,
         total_penalty=round(total_penalty, 4),
         event_count=len(events),
+        breakdown=breakdown,
     )
 
 
