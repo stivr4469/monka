@@ -55,14 +55,20 @@ def _find_stealer_zip(stealer_log_id: Optional[str] = None) -> Optional[Path]:
     Иначе — возвращает самый свежий ZIP из временных директорий.
     Возвращает None если ничего не найдено.
     """
+    # HIGH-1: проверяем что результирующий путь остаётся внутри разрешённых директорий
+    allowed_dirs = {Path(d).resolve() for d in _STEALER_SEARCH_DIRS}
     candidates: list[Path] = []
 
     for search_dir in _STEALER_SEARCH_DIRS:
         for pattern in _STEALER_GLOB_PATTERNS:
             full_pattern = f"{search_dir}/{pattern}"
             for path_str in glob.glob(full_pattern):
-                p = Path(path_str)
+                p = Path(path_str).resolve()
                 if not p.is_file():
+                    continue
+                # Path traversal guard: реальный путь должен быть внутри разрешённой директории
+                if p.parent not in allowed_dirs:
+                    logger.warning("[cookie_scan] Путь вне разрешённых директорий: %s", p)
                     continue
                 # Если задан ID — фильтруем по вхождению в имя файла
                 if stealer_log_id and stealer_log_id not in p.name:

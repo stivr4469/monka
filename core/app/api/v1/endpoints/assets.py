@@ -1,5 +1,7 @@
+import asyncio
 import math
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from fastapi.responses import Response
@@ -8,6 +10,7 @@ from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, DBDep
 from app.core.config import PLAN_DOMAIN_LIMITS
+from app.core.rate_limit import limiter
 from app.models.asset import Asset
 from app.models.event import Event
 from app.models.organization import Organization
@@ -176,6 +179,23 @@ def _severity_to_level(score: int) -> str:
     return "low"
 
 
+def _calc_risk_penalty(
+    severity: str,
+    detected: datetime,
+    importance: float,
+    now: datetime,
+) -> float:
+    """HIGH-8: единая формула штрафа W×T×A — используется в risk-score и PDF-отчётах."""
+    weight = _SEVERITY_WEIGHTS.get(severity.lower(), 0.0)
+    if weight == 0.0:
+        return 0.0
+    if detected.tzinfo is None:
+        detected = detected.replace(tzinfo=timezone.utc)
+    delta_days = max(0.0, (now - detected).total_seconds() / 86400.0)
+    decay = math.exp(-_DECAY_RATE * delta_days)
+    return weight * decay * importance
+
+
 @router.get(
     "/{asset_id}/risk-score",
     response_model=RiskScoreResponse,
@@ -224,25 +244,10 @@ async def get_risk_score(
     events = events_result.all()
 
     now = datetime.now(timezone.utc)
-    total_penalty: float = 0.0
-
-    for ev in events:
-        weight = _SEVERITY_WEIGHTS.get(ev.severity, 0.0)
-        if weight == 0.0:
-            # Уровень info не вносит вклада — пропускаем
-            continue
-
-        # Убеждаемся, что detected_at timezone-aware для корректного вычитания
-        detected = ev.detected_at
-        if detected.tzinfo is None:
-            detected = detected.replace(tzinfo=timezone.utc)
-
-        delta_days: float = max(0.0, (now - detected).total_seconds() / 86400.0)
-
-        # Экспоненциальное затухание: свежее событие даёт полный вес
-        decay: float = math.exp(-_DECAY_RATE * delta_days)
-
-        total_penalty += weight * decay * importance
+    total_penalty: float = sum(
+        _calc_risk_penalty(ev.severity, ev.detected_at, importance, now)
+        for ev in events
+    )
 
     # Итоговый score: 100 минус сумма штрафов, зажатый в [0, 100]
     raw_score: float = 100.0 - total_penalty
@@ -312,15 +317,12 @@ async def _compute_risk_score_for_asset(
     asset: Asset,
     events_dicts: list[dict],
 ) -> int:
-    """Повторяет формулу risk-score без обращения к БД (используем уже загруженные события)."""
+    """HIGH-8: использует единую формулу _calc_risk_penalty."""
     importance: float = getattr(asset, "importance", None) or 1.0
     now = datetime.now(timezone.utc)
     total_penalty: float = 0.0
 
     for ev in events_dicts:
-        weight = _SEVERITY_WEIGHTS.get(str(ev.get("severity", "info")).lower(), 0.0)
-        if weight == 0.0:
-            continue
         detected = ev.get("detected_at")
         if detected is None:
             continue
@@ -329,12 +331,8 @@ async def _compute_risk_score_for_asset(
                 detected = datetime.fromisoformat(detected.replace("Z", "+00:00"))
             except ValueError:
                 continue
-        if detected.tzinfo is None:
-            detected = detected.replace(tzinfo=timezone.utc)
-
-        delta_days = max(0.0, (now - detected).total_seconds() / 86400.0)
-        decay = math.exp(-_DECAY_RATE * delta_days)
-        total_penalty += weight * decay * importance
+        severity = str(ev.get("severity", "info")).lower()
+        total_penalty += _calc_risk_penalty(severity, detected, importance, now)
 
     return max(0, min(100, round(100.0 - total_penalty)))
 
@@ -351,7 +349,9 @@ async def _compute_risk_score_for_asset(
         404: {"description": "Актив не найден"},
     },
 )
+@limiter.limit("5/minute")
 async def download_technical_report(
+    request: Request,
     asset_id: str,
     db: DBDep,
     current_user: CurrentUser,
@@ -376,11 +376,11 @@ async def download_technical_report(
     org = org_result.scalar_one_or_none()
     org_name = org.name if org else "Unknown"
 
-    pdf_bytes = generate_technical_report(
-        org_name=org_name,
-        domain=asset.domain,
-        risk_score=risk_score,
-        events=events,
+    # MEDIUM-9: CPU-тяжёлая reportlab-генерация в executor чтобы не блокировать event loop
+    loop = asyncio.get_event_loop()
+    pdf_bytes = await loop.run_in_executor(
+        None,
+        partial(generate_technical_report, org_name=org_name, domain=asset.domain, risk_score=risk_score, events=events),
     )
 
     safe_domain = asset.domain.replace("/", "_").replace("\\", "_")
@@ -405,7 +405,9 @@ async def download_technical_report(
         404: {"description": "Актив не найден"},
     },
 )
+@limiter.limit("5/minute")
 async def download_executive_report(
+    request: Request,
     asset_id: str,
     db: DBDep,
     current_user: CurrentUser,
@@ -430,11 +432,10 @@ async def download_executive_report(
     org = org_result.scalar_one_or_none()
     org_name = org.name if org else "Unknown"
 
-    pdf_bytes = generate_executive_report(
-        org_name=org_name,
-        domain=asset.domain,
-        risk_score=risk_score,
-        events=events,
+    loop = asyncio.get_event_loop()
+    pdf_bytes = await loop.run_in_executor(
+        None,
+        partial(generate_executive_report, org_name=org_name, domain=asset.domain, risk_score=risk_score, events=events),
     )
 
     safe_domain = asset.domain.replace("/", "_").replace("\\", "_")

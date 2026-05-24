@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import Coroutine, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -16,6 +17,27 @@ from app.services.webhook import notify_critical_event
 from app.workers_client import ensure_workers_path, get_executor
 
 logger = logging.getLogger(__name__)
+
+
+def _create_bg_task(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    """CRITICAL-5: create_task вместо ensure_future + логирование необработанных исключений."""
+    task = asyncio.create_task(coro)
+    task.add_done_callback(_log_task_exc)
+    return task
+
+
+def _log_task_exc(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        logger.error("Фоновая задача завершилась с ошибкой: %s", task.exception(), exc_info=task.exception())
+
+
+def _is_cred_event(source_type: str | None, event_type: str | None) -> bool:
+    """DRY-хелпер: определяет является ли событие credential-leak (MEDIUM-8)."""
+    return (
+        source_type in ("stealer", "stealer_log", "breach")
+        or event_type in ("credential_leak", "active_session_leak", "stealer_log")
+    )
+
 
 # Подключаем workers/ к sys.path через единый синглтон
 ensure_workers_path()
@@ -130,17 +152,14 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         "dedup_hash":    db_event.dedup_hash,
         "payload":       db_event.payload or {},
     }
-    _is_credential_event = (
-        event.source_type in ("stealer", "stealer_log", "breach")
-        or event.event_type in ("credential_leak", "active_session_leak", "stealer_log")
-    )
+    _is_credential_event = _is_cred_event(event.source_type, event.event_type)
     if _is_credential_event:
-        asyncio.ensure_future(index_leaked_credential(str(db_event.id), _os_event_data))
+        _create_bg_task(index_leaked_credential(str(db_event.id), _os_event_data))
     else:
-        asyncio.ensure_future(index_event(db_event.id, _os_event_data))
+        _create_bg_task(index_event(db_event.id, _os_event_data))
 
     # 9.E: Обновляем Neo4j-граф асинхронно (graceful: если Neo4j недоступен — игнорируем)
-    asyncio.ensure_future(upsert_event_to_graph(event.model_dump()))
+    _create_bg_task(upsert_event_to_graph(event.model_dump()))
 
     return {"status": "accepted", "event_id": db_event.id}
 
@@ -166,6 +185,18 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
         )
         existing_hashes = {row[0] for row in existing_result.all()}
 
+    # CRITICAL-4: один запрос для всех доменов батча вместо N запросов в цикле
+    domains_in_batch = {e.target_domain for e in body.events if e.target_domain}
+    domain_to_asset: dict[str, Asset] = {}
+    if domains_in_batch:
+        assets_result = await db.execute(
+            select(Asset).where(
+                Asset.domain.in_(domains_in_batch),
+                Asset.is_active.is_(True),
+            )
+        )
+        domain_to_asset = {a.domain: a for a in assets_result.scalars()}
+
     accepted = duplicates = errors = 0
     new_events: list[Event] = []
 
@@ -174,11 +205,7 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             duplicates += 1
             continue
 
-        asset_result = await db.execute(
-            select(Asset).where(Asset.domain == event.target_domain, Asset.is_active == True)  # noqa: E712
-        )
-        asset = asset_result.scalar_one_or_none()
-
+        asset = domain_to_asset.get(event.target_domain or "")
         db_event = Event(
             event_type=event.event_type,
             severity=event.severity,
@@ -198,7 +225,7 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             await db.commit()
             for ev in new_events:
                 await db.refresh(ev)
-            accepted = len(new_events)
+            accepted = sum(1 for ev in new_events if ev.id is not None)
         except Exception as exc:
             await db.rollback()
             logger.error("Ошибка bulk insert: %s", exc)
@@ -219,16 +246,12 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             "dedup_hash":    ev.dedup_hash,
             "payload":       ev.payload or {},
         }
-        _is_cred = (
-            ev.source_type in ("stealer", "stealer_log", "breach")
-            or ev.event_type in ("credential_leak", "active_session_leak", "stealer_log")
-        )
-        if _is_cred:
-            asyncio.ensure_future(index_leaked_credential(str(ev.id), _ev_data))
+        if _is_cred_event(ev.source_type, ev.event_type):
+            _create_bg_task(index_leaked_credential(str(ev.id), _ev_data))
         else:
-            asyncio.ensure_future(index_event(ev.id, _ev_data))
+            _create_bg_task(index_event(ev.id, _ev_data))
         # 9.E: Neo4j-граф для каждого события батча
-        asyncio.ensure_future(upsert_event_to_graph(_ev_data))
+        _create_bg_task(upsert_event_to_graph(_ev_data))
 
     return {
         "status": "partial" if errors else "accepted",

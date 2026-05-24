@@ -7,14 +7,28 @@ Attack Path Engine — API для работы с Neo4j-графом завис�
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import select
 
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, DBDep
+from app.models.asset import Asset
 from app.services.graph_client import find_attack_paths, get_domain_graph
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/graph", tags=["graph"])
+
+
+async def _verify_domain_ownership(domain: str, db: DBDep, current_user: CurrentUser) -> None:
+    """HIGH-4 / CRITICAL-6: проверка что домен принадлежит организации текущего пользователя."""
+    result = await db.execute(
+        select(Asset).where(
+            Asset.domain == domain,
+            Asset.organization_id == current_user.organization_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Домен не найден")
 
 
 @router.get(
@@ -24,6 +38,7 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 )
 async def get_attack_paths(
     domain: str,
+    db: DBDep,
     current_user: CurrentUser,
 ) -> list[dict]:
     """
@@ -36,11 +51,8 @@ async def get_attack_paths(
     Пустой список означает либо отсутствие данных в графе,
     либо что Neo4j недоступен.
     """
-    logger.info(
-        "[graph] Запрос attack-paths: domain=%s user=%s",
-        domain,
-        current_user.email,
-    )
+    await _verify_domain_ownership(domain, db, current_user)
+    logger.info("[graph] attack-paths: domain=%s user=%s", domain, current_user.email)
     return await find_attack_paths(domain)
 
 
@@ -51,6 +63,7 @@ async def get_attack_paths(
 )
 async def get_graph_visualization(
     domain: str,
+    db: DBDep,
     current_user: CurrentUser,
     limit: int = Query(default=200, ge=1, le=1000, description="Максимум нод"),
 ) -> dict:
@@ -65,9 +78,6 @@ async def get_graph_visualization(
 
     Совместим с D3.js force-directed graph и Vis.js network.
     """
-    logger.info(
-        "[graph] Запрос visualization: domain=%s user=%s",
-        domain,
-        current_user.email,
-    )
+    await _verify_domain_ownership(domain, db, current_user)
+    logger.info("[graph] visualization: domain=%s user=%s", domain, current_user.email)
     return await get_domain_graph(domain)

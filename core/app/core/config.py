@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     # Режим разработки — включает беспарольный /auth/dev-login
     # НИКОГДА не ставить True в production
-    DEV_MODE: bool = True
+    DEV_MODE: bool = False
 
 
 # Лимиты доменов (активов) по тарифным планам.
@@ -60,6 +60,30 @@ PLAN_DOMAIN_LIMITS: dict[str, int] = {
     "professional": 10,
     "enterprise": 999_999,
 }
+
+
+_UNSAFE_DEFAULTS: frozenset[str] = frozenset({
+    "CHANGE_ME_IN_PRODUCTION",
+    "INTERNAL_CHANGE_ME",
+    "changeme",
+})
+
+
+def validate_secrets(s: Settings) -> None:
+    """При старте приложения убеждаемся что секреты не оставлены дефолтными."""
+    if s.SECRET_KEY in _UNSAFE_DEFAULTS:
+        raise ValueError(
+            "SECRET_KEY не изменён. Установите безопасное значение в .env"
+        )
+    if s.INTERNAL_API_SECRET in _UNSAFE_DEFAULTS:
+        raise ValueError(
+            "INTERNAL_API_SECRET не изменён. Установите безопасное значение в .env"
+        )
+    if s.DEV_MODE:
+        import logging
+        logging.getLogger(__name__).warning(
+            "DEV_MODE=True — /auth/dev-login активен. НИКОГДА не включать в production."
+        )
 
 
 @lru_cache

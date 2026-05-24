@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     github_scan,
     graph,
     hardening_scan,
+    human_osint_scan,
     ingest,
     internal_alerts,
     mssp,
@@ -78,4 +79,7 @@ api_router.include_router(graph.router)
 
 # Shodan Enrichment — обогащение данных Asset Drift (задача 9.J)
 api_router.include_router(enrich_scan.router)
+
+# Human OSINT — профилирование сотрудников компании (задача 9.D)
+api_router.include_router(human_osint_scan.router)
 

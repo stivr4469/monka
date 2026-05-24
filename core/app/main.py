@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import select
 
 from app.api.v1.router import api_router
-from app.core.config import settings
+from app.core.config import get_settings, settings, validate_secrets
 from app.core.rate_limit import limiter
 from app.core.security import hash_password
 from app.db import AsyncSessionLocal, engine
@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # CRITICAL-2: проверяем что секреты не оставлены дефолтными
+    validate_secrets(get_settings())
+
     # Создаём таблицы (только для dev; в prod — Alembic)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -94,8 +97,8 @@ app.add_middleware(
     # Читаем из настроек — не хардкодим origins
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 # Middleware структурированного логирования

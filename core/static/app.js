@@ -343,6 +343,19 @@ class API {
     return res.json();
   }
 
+  /** POST /api/v1/scan/human-osint */
+  static async scanHumanOsint(domain) {
+    const res = await this.request('/api/v1/scan/human-osint', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    });
+    if (!res || !res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res?.status}`);
+    }
+    return res.json();
+  }
+
   /** POST /api/v1/scan/s3 */
   static async scanS3(domain) {
     const res = await this.request('/api/v1/scan/s3', {
@@ -1831,6 +1844,120 @@ async function loadDarknetEvents(domain) {
 }
 
 // ─────────────────────────────────────────────
+// Human OSINT — профилирование сотрудников (задача 9.D)
+// ─────────────────────────────────────────────
+
+/**
+ * Запускает Human OSINT сканирование для текущего домена.
+ * Использует поле darknet-domain (общее поле для всех scan-операций).
+ */
+async function handleHumanOsint() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+  if (!domain) {
+    Toast.show('warning', 'Укажите домен для Human OSINT');
+    if (domainInput) domainInput.focus();
+    return;
+  }
+
+  const btn = document.getElementById('human-osint-btn');
+  setLoading(btn, true);
+  try {
+    const data = await API.scanHumanOsint(domain);
+    const gh = data.github_profiles || 0;
+    const li = data.linkedin_profiles || 0;
+    const vip = data.vip_found || 0;
+    Toast.show(
+      'success',
+      'Human OSINT завершён',
+      `GitHub: ${gh}, LinkedIn: ${li}, VIP: ${vip}`,
+    );
+    addScanLog('ok', domain, `human osint: GitHub=${gh} LinkedIn=${li} VIP=${vip}`);
+  } catch (e) {
+    Toast.show('error', 'Ошибка Human OSINT', e.message);
+    addScanLog('error', domain, `human osint: ${e.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/**
+ * Загружает и отображает профили сотрудников на вкладке Сотрудники.
+ * Читает домен из поля darknet-domain (если пусто — показывает подсказку).
+ */
+async function loadEmployees() {
+  const domainInput = document.getElementById('darknet-domain');
+  const domain = domainInput?.value.trim() || '';
+
+  const noDomainEl = document.getElementById('employees-no-domain');
+  const container  = document.getElementById('employees-list');
+
+  if (!domain) {
+    if (noDomainEl) noDomainEl.style.display = '';
+    if (container) container.innerHTML = '';
+    return;
+  }
+  if (noDomainEl) noDomainEl.style.display = 'none';
+  if (!container) return;
+
+  container.innerHTML = `
+    <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+      <span class="spinner" style="display:inline-block;margin-right:.5rem"></span>Загрузка…
+    </div>`;
+
+  try {
+    const events = await API.getEvents({
+      event_type: 'human_intel',
+      domain,
+      limit: 100,
+    });
+
+    if (!events.length) {
+      container.innerHTML = `
+        <p class="hint" style="padding:1rem 0">
+          Нет данных по домену <strong>${escHtml(domain)}</strong>.
+          Перейдите на вкладку Scan и запустите Human OSINT.
+        </p>`;
+      return;
+    }
+
+    container.innerHTML = events.map(ev => {
+      const p = ev.payload || {};
+      const isVip    = p.is_vip;
+      const isGithub = p.source === 'github';
+      const name     = escHtml(p.name || p.github_login || 'Unknown');
+      const jobTitle = escHtml(p.job_title || '');
+      const source   = isGithub ? '🐙 GitHub' : '💼 LinkedIn';
+      const patternsText = (p.email_patterns || []).slice(0, 2).join(', ');
+      const vipBadge = isVip
+        ? '<span class="badge-vip" title="Высокий риск фишинга">VIP</span>'
+        : '';
+      const profileLink = p.profile_url || p.linkedin_url
+        ? `<a href="${escHtml(p.profile_url || p.linkedin_url)}"
+               target="_blank" rel="noopener noreferrer"
+               style="font-size:.75rem;opacity:.6;margin-left:.4rem"
+               title="Открыть профиль">↗</a>`
+        : '';
+
+      return `
+        <div class="employee-card${isVip ? ' vip' : ''}">
+          <div class="employee-name">${name}${vipBadge}${profileLink}</div>
+          ${jobTitle ? `<div class="employee-title">${jobTitle}</div>` : ''}
+          <div class="employee-meta">
+            ${source}${patternsText ? ' &middot; ' + escHtml(patternsText) : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch (e) {
+    container.innerHTML = `
+      <p class="hint" style="color:var(--danger);padding:1rem 0">
+        Ошибка загрузки: ${escHtml(e.message)}
+      </p>`;
+  }
+}
+
+// ─────────────────────────────────────────────
 // Навигация по табам
 // ─────────────────────────────────────────────
 
@@ -1845,6 +1972,8 @@ const TAB_LOADERS = {
   mssp:      () => { stopDashboardRefresh(); stopEventsPolling(); loadMsspClients(); },
   // Attack Graph (задача 9.E): показываем вкладку, данные загружаются по кнопке
   graph:     () => { stopDashboardRefresh(); stopEventsPolling(); },
+  // Human OSINT (задача 9.D): загружаем профили при переключении на вкладку
+  employees: () => { stopDashboardRefresh(); stopEventsPolling(); loadEmployees(); },
 };
 
 function switchTab(name) {

@@ -13,12 +13,15 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import socket
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,41 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_SEC: int = 5
 # Пауза перед retry в секундах
 _RETRY_DELAY_SEC: int = 2
+
+
+def _is_safe_webhook_url(url: str) -> bool:
+    """SSRF-защита: разрешены только публичные HTTP/HTTPS адреса (не RFC 1918, не loopback)."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        # Разрешаем DNS-имена, но блокируем IP из приватных диапазонов
+        try:
+            addr = ipaddress.ip_address(hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                logger.warning("[webhook] SSRF-блокировка: приватный IP %s", hostname)
+                return False
+        except ValueError:
+            # hostname — не IP-адрес, проверяем резолв
+            try:
+                resolved = socket.gethostbyname(hostname)
+                addr = ipaddress.ip_address(resolved)
+                if addr.is_private or addr.is_loopback or addr.is_link_local:
+                    logger.warning(
+                        "[webhook] SSRF-блокировка: %s резолвится в приватный IP %s",
+                        hostname,
+                        resolved,
+                    )
+                    return False
+            except OSError:
+                pass  # DNS не резолвится — позволяем urllib обработать ошибку
+        return True
+    except Exception as exc:
+        logger.warning("[webhook] Ошибка валидации URL %s: %s", url, exc)
+        return False
 
 
 def _send_webhook_sync(webhook_url: str, payload: dict) -> None:
@@ -123,6 +161,10 @@ def notify_critical_event(
         source_name:  Источник события (опционально)
     """
     if not webhook_url or not webhook_url.strip():
+        return
+
+    if not _is_safe_webhook_url(webhook_url):
+        logger.error("[webhook] Отклонён небезопасный webhook_url: %s", webhook_url)
         return
 
     # Импорт здесь во избежание circular import: webhook → workers_client → (ничего)
