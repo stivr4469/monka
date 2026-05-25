@@ -94,58 +94,114 @@ def _get_core_api_url() -> str:
 
 def _run_full_scan_background(domain: str, port: int) -> None:
     """
-    Полное сканирование актива:
-      subfinder → nuclei → github_search → gitleaks
+    Полное сканирование актива — все доступные модули:
+      TLS → Hardening → Tech Profile → Phishing → Port Scan →
+      Darknet → Paste → GitHub → Gitleaks → Subfinder → S3 → Takeover
 
-    Запускается в фоновом потоке через ThreadPoolExecutor.
+    Каждый модуль изолирован: падение одного не прерывает остальные.
+    Результаты поступают через /api/v1/internal/ingest в БД и OpenSearch.
     """
     core_api_url = f"http://127.0.0.1:{port}"
+    sec = settings.INTERNAL_API_SECRET
 
-    # 1. Subfinder — обнаружение поддоменов
-    try:
-        from app.scanner import run_subfinder
-        run_subfinder(domain=domain, port=port)
-        logger.info("[schedule] subfinder завершён для %s", domain)
-    except Exception as exc:
-        logger.error("[schedule] subfinder упал для %s: %s", domain, exc)
+    def _run(name: str, fn, *args, **kwargs):
+        try:
+            fn(*args, **kwargs)
+            logger.info("[full_scan] ✓ %s завершён для %s", name, domain)
+        except ImportError:
+            logger.warning("[full_scan] %s воркер недоступен (ImportError)", name)
+        except Exception as exc:
+            logger.error("[full_scan] %s упал для %s: %s", name, domain, exc)
 
-    # 2. GitHub Search — поиск упоминаний домена
-    try:
+    # 1. TLS / JA4 — сертификаты, WAF, протоколы
+    def _tls():
+        from tasks.tls_fingerprinter import run_tls_scan
+        run_tls_scan(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("tls_scan", _tls)
+
+    # 2. HTTP Hardening — заголовки безопасности, HSTS, CSP
+    def _hardening():
+        from tasks.domain_hardening import run_domain_hardening
+        run_domain_hardening(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("hardening", _hardening)
+
+    # 3. Technology Profiling — CMS, фреймворки, EOL-версии
+    def _tech():
+        from tasks.tech_profiler import run_tech_profiler
+        run_tech_profiler(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("tech_profiler", _tech)
+
+    # 4. Phishing Detection — тайпосквот и фишинговые домены
+    def _phishing():
+        from tasks.phishing_detector import detect_phishing_domains
+        detect_phishing_domains(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("phishing_detector", _phishing)
+
+    # 5. Port Scan — открытые порты и сервисы
+    def _ports():
+        from tasks.port_scanner import run_port_scan
+        run_port_scan(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("port_scanner", _ports)
+
+    # 6. Darknet Monitor — RansomWatch + Ahmia + DarkSearch
+    def _darknet():
+        from tasks.darknet_monitor import monitor_darknet
+        monitor_darknet(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("darknet_monitor", _darknet)
+
+    # 7. Paste Monitor — Pastebin и аналоги
+    def _paste():
+        from tasks.paste_monitor import monitor_pastes
+        monitor_pastes(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("paste_monitor", _paste)
+
+    # 8. GitHub Search — упоминания домена в коде
+    def _github():
         from tasks.github_search import search_github
         if settings.GITHUB_TOKEN:
             search_github(
                 domain=domain,
                 github_token=settings.GITHUB_TOKEN,
                 core_api_url=core_api_url,
-                internal_secret=settings.INTERNAL_API_SECRET,
+                internal_secret=sec,
             )
-            logger.info("[schedule] github_search завершён для %s", domain)
         else:
-            logger.warning("[schedule] GITHUB_TOKEN не задан, пропускаю github_search")
-    except ImportError:
-        logger.warning("[schedule] workers недоступны, пропускаю github_search")
-    except Exception as exc:
-        logger.error("[schedule] github_search упал для %s: %s", domain, exc)
+            logger.warning("[full_scan] GITHUB_TOKEN не задан — пропуск github_search")
+    _run("github_search", _github)
 
-    # 3. Gitleaks — сканирование репозиториев
-    try:
+    # 9. Gitleaks — секреты в репозиториях
+    def _gitleaks():
         from tasks.gitleaks import scan_github_results
         if settings.GITHUB_TOKEN:
             scan_github_results(
                 domain=domain,
                 github_token=settings.GITHUB_TOKEN,
                 core_api_url=core_api_url,
-                internal_secret=settings.INTERNAL_API_SECRET,
+                internal_secret=sec,
             )
-            logger.info("[schedule] gitleaks завершён для %s", domain)
         else:
-            logger.warning("[schedule] GITHUB_TOKEN не задан, пропускаю gitleaks")
-    except ImportError:
-        logger.warning("[schedule] gitleaks воркер недоступен")
-    except Exception as exc:
-        logger.error("[schedule] gitleaks упал для %s: %s", domain, exc)
+            logger.warning("[full_scan] GITHUB_TOKEN не задан — пропуск gitleaks")
+    _run("gitleaks", _gitleaks)
 
-    logger.info("[schedule] Полное сканирование завершено для %s", domain)
+    # 10. Subfinder — поддомены и crt.sh
+    def _subfinder():
+        from app.scanner import run_subfinder
+        run_subfinder(domain=domain, port=port)
+    _run("subfinder", _subfinder)
+
+    # 11. S3 — открытые бакеты
+    def _s3():
+        from tasks.s3_scanner import run_s3_scan
+        run_s3_scan(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("s3_scanner", _s3)
+
+    # 12. Subdomain Takeover — захват поддоменов (требует список поддоменов)
+    def _takeover():
+        from tasks.takeover_detector import scan_takeover
+        scan_takeover(domain=domain, subdomains=[], core_api_url=core_api_url, internal_secret=sec)
+    _run("takeover_detector", _takeover)
+
+    logger.info("[full_scan] ✅ Полное сканирование завершено для %s", domain)
 
 
 # ─── Эндпоинты ───────────────────────────────────────────────────────────────

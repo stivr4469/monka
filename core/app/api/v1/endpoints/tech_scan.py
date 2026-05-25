@@ -82,14 +82,13 @@ class TechScanResponse(BaseModel):
 
 @router.post(
     "/tech-profile",
-    response_model=TechScanResponse,
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Technology Profiling (Wappalyzer-like)",
     description=(
         "Определяет технологии домена по HTTP-заголовкам, кукам и телу страницы. "
         "Покрывает 30+ технологий: CMS, фреймворки, веб-серверы, CDN, DevOps-инструменты. "
         "Версии проверяются по базе End-of-Life — устаревшие версии получают severity=medium. "
-        "Результаты: /api/v1/events?event_type=tech_profile&source_name=tech_profiler"
+        "Результаты: GET /api/v1/events?event_type=tech_profile&source_name=tech_profiler"
     ),
 )
 @limiter.limit("5/minute")
@@ -97,12 +96,10 @@ async def trigger_tech_scan(
     request: Request,
     body: TechScanRequest,
     current_user: CurrentUser,
-) -> TechScanResponse:
+) -> dict:
     """
-    Запускает Technology Profiling в фоновом потоке.
-
-    Ждёт результата до 30 секунд (timeout).
-    Возвращает список обнаруженных технологий и EOL-предупреждения.
+    Запускает Technology Profiling в фоновом потоке (HTTP 202, не блокирует).
+    Результаты появляются асинхронно в /api/v1/events/.
     """
     if not _TECH_PROFILER_AVAILABLE:
         raise HTTPException(
@@ -110,41 +107,18 @@ async def trigger_tech_scan(
             detail="Tech profiler недоступен: воркер не загружен",
         )
 
-    domain = body.domain  # нормализован валидатором
+    domain = body.domain
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    # Запускаем в пуле потоков и ждём результат (синхронный HTTP-запрос в воркере)
-    future = get_executor().submit(
+    get_executor().submit(
         run_tech_profiler,
         domain,
         core_api_url,
         settings.INTERNAL_API_SECRET,
     )
 
-    try:
-        result: dict = future.result(timeout=30)
-    except TimeoutError:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Таймаут сканирования домена {domain} (30с). Попробуйте позже.",
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Ошибка сканирования: {exc}",
-        )
-
-    # Обработка ошибки недостижимости домена
-    if "error" in result:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Домен недостижим: {result['error']}",
-        )
-
-    return TechScanResponse(
-        status="completed",
-        domain=domain,
-        technologies=[TechDetected(**t) for t in result.get("technologies", [])],
-        eol_detected=[EolItem(**e) for e in result.get("eol_detected", [])],
-        severity=result.get("severity", "info"),
-    )
+    return {
+        "status": "processing",
+        "domain": domain,
+        "detail": f"Tech profiling запущен. Результаты: GET /api/v1/events?target_domain={domain}",
+    }
