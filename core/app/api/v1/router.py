@@ -1,13 +1,17 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    ai_narrative,
     alerts,
     api_keys,
     assets,
     auth,
     billing,
     breach,
+    censys_scan,
     cookie_scan,
+    ct_scan,
+    dashboard,
     darknet_scan,
     enrich_scan,
     events,
@@ -22,16 +26,19 @@ from app.api.v1.endpoints import (
     paste_scan,
     score,
     phishing_scan,
+    masscan_scan,
     port_scan,
     reveal,
     s3_scan,
     scheduled_scan,
     stealer,
     stealer_sources,
+    stix_export,
     takeover_scan,
     tech_scan,
     telegram_scan,
     tls_scan,
+    brand_scan,
     whois_scan,
 )
 
@@ -60,6 +67,13 @@ api_router.include_router(s3_scan.router)
 api_router.include_router(cookie_scan.router)
 api_router.include_router(takeover_scan.router)
 api_router.include_router(tls_scan.router)
+api_router.include_router(masscan_scan.router)
+
+# Certificate Transparency Monitor — crt.sh (задача 12.A)
+api_router.include_router(ct_scan.router)
+
+# Brand Monitor — Reddit + HN + Telegram (фаза 12.B / 12.E)
+api_router.include_router(brand_scan.router)
 
 # Стилер-логи: загрузка файлов + автоматические источники
 api_router.include_router(stealer.router)
@@ -106,4 +120,16 @@ api_router.include_router(notifications.router)
 
 # Security Score Engine — многокатегорийный score (задача 11)
 api_router.include_router(score.router)
+
+# Executive Dashboard — сводный дашборд безопасности (задача 11.C)
+api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+
+# AI Risk Narrative — executive summary через Claude API (фаза 13.G)
+api_router.include_router(ai_narrative.router, prefix="/ai", tags=["ai"])
+
+# STIX 2.1 Export — SIEM интеграция (фаза 13.E)
+api_router.include_router(stix_export.router, prefix="/export", tags=["export"])
+
+# Censys Enrichment — обогащение данных через Censys Search API (фаза 13.B)
+api_router.include_router(censys_scan.router)
 

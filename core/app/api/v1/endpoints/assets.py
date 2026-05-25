@@ -15,7 +15,7 @@ from app.models.asset import Asset
 from app.models.event import Event
 from app.models.organization import Organization
 from app.scanner import run_subfinder
-from app.schemas.asset import AssetCreate, AssetRead, AssetUpdate
+from app.schemas.asset import AssetCreate, AssetRead, AssetUpdate, SupplyChainCreate
 from app.services.report_generator import (
     generate_executive_report,
     generate_technical_report,
@@ -73,6 +73,7 @@ async def create_asset(
         domain=body.domain,
         description=body.description,
         organization_id=current_user.organization_id,
+        asset_type=body.asset_type,
     )
     db.add(asset)
     await db.commit()
@@ -620,3 +621,87 @@ async def get_asset_map(
             "technologies": len(all_techs),
         },
     }
+
+
+# ─── 12.C: Supply Chain Monitoring ───────────────────────────────────────────
+
+@router.post(
+    "/{asset_id}/supply-chain",
+    response_model=AssetRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Добавить vendor/subsidiary актив в supply chain (12.C)",
+)
+async def add_supply_chain_asset(
+    asset_id: str,
+    body: SupplyChainCreate,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> Asset:
+    """
+    12.C: Добавляет vendor или subsidiary домен как secondary asset,
+    связанный с указанным primary asset.
+
+    Ограничения:
+    - Родительский актив должен быть типа 'primary'.
+    - asset_type должен быть 'vendor' или 'subsidiary' (не 'primary').
+    """
+    if current_user.organization_id is None:
+        raise HTTPException(status_code=400, detail="Пользователь не привязан к организации")
+
+    # Проверяем существование и принадлежность родительского актива
+    parent_result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    parent = parent_result.scalar_one_or_none()
+
+    if parent is None or parent.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Актив не найден")
+
+    # Нельзя добавить vendor к vendor/subsidiary — только к primary
+    if parent.asset_type != "primary":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Нельзя добавить supply chain актив к '{parent.asset_type}'. "
+                   "Родительский актив должен быть типа 'primary'.",
+        )
+
+    # Создаём secondary asset, связанный с primary
+    child = Asset(
+        domain=body.domain,
+        description=body.description,
+        organization_id=current_user.organization_id,
+        asset_type=body.asset_type,
+        parent_asset_id=asset_id,
+    )
+    db.add(child)
+    await db.commit()
+    await db.refresh(child)
+    return child
+
+
+@router.get(
+    "/{asset_id}/supply-chain",
+    response_model=list[AssetRead],
+    summary="Список supply chain активов (vendor/subsidiary) для primary актива (12.C)",
+)
+async def list_supply_chain_assets(
+    asset_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> list[Asset]:
+    """
+    12.C: Возвращает все vendor/subsidiary активы, привязанные к данному primary asset.
+    """
+    if current_user.organization_id is None:
+        return []
+
+    # Проверяем существование и принадлежность родительского актива
+    parent_result = await db.execute(select(Asset).where(Asset.id == asset_id))
+    parent = parent_result.scalar_one_or_none()
+
+    if parent is None or parent.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Актив не найден")
+
+    # Возвращаем все дочерние supply chain активы
+    children_result = await db.execute(
+        select(Asset).where(Asset.parent_asset_id == asset_id)
+    )
+    return list(children_result.scalars().all())

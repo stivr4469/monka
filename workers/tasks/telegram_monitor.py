@@ -512,3 +512,122 @@ def run_telegram_monitor_all_assets() -> None:
                     logger.warning("[beat] telegram-monitor-all: ошибка для %s: %s", domain, exc)
     except Exception as exc:
         logger.warning("[beat] telegram-monitor-all: ошибка получения активов: %s", exc)
+
+
+# ──────────────────────────────────────────────
+# Phase 12.E — Мониторинг бренда в Telegram-каналах
+# ──────────────────────────────────────────────
+
+# Максимальная длина snippet для brand-упоминаний
+_BRAND_SNIPPET_MAX = 200
+
+
+def monitor_brand_telegram(
+    domain: str,
+    brand_keywords: list[str],
+    core_api_url: str,
+    internal_secret: str,
+) -> dict[str, Any]:
+    """
+    Ищет brand_keywords в тех же каналах что monitor_telegram,
+    но severity="low" (brand mentions — не credentials).
+
+    Аргументы:
+        domain: домен актива (например "example.com")
+        brand_keywords: список ключевых слов для поиска ["CompanyName", "product"]
+        core_api_url: базовый URL Core API
+        internal_secret: внутренний секрет для ingest
+
+    Возвращает:
+        {"channels_checked": int, "total_posts": int, "matched": int, "sent": int}
+    """
+    domain = domain.strip().lower()
+    logger.info(
+        "[tg/brand] Начало мониторинга бренда domain=%s keywords=%s",
+        domain,
+        brand_keywords,
+    )
+
+    ingest_url = f"{core_api_url}/api/v1/internal/ingest"
+    ingest_headers: dict[str, str] = {"Authorization": f"Bearer {internal_secret}"}
+
+    # Нормализуем ключевые слова для поиска
+    keywords_lower = [kw.lower() for kw in brand_keywords if kw.strip()]
+    if not keywords_lower:
+        logger.warning(
+            "[tg/brand] Пустой список brand_keywords для домена %s — пропускаем",
+            domain,
+        )
+        return {"channels_checked": 0, "total_posts": 0, "matched": 0, "sent": 0}
+
+    totals: dict[str, int] = {
+        "channels_checked": 0,
+        "total_posts": 0,
+        "matched": 0,
+        "sent": 0,
+    }
+
+    for idx, channel in enumerate(DEFAULT_LEAK_CHANNELS):
+        # Пауза между каналами (rate limit)
+        if idx > 0:
+            time.sleep(_CHANNEL_INTERVAL)
+
+        try:
+            posts = fetch_channel_posts(channel)
+            totals["channels_checked"] += 1
+            totals["total_posts"] += len(posts)
+
+            for post in posts:
+                text_lower = post.get("text", "").lower()
+                post_url = post.get("url", "")
+                date_str = post.get("date", "")
+
+                # Проверяем наличие любого бренд-ключевого слова в тексте поста
+                matched_keyword: str | None = None
+                for kw in keywords_lower:
+                    if kw in text_lower:
+                        matched_keyword = kw
+                        break
+
+                if matched_keyword is None:
+                    continue
+
+                totals["matched"] += 1
+
+                # Формируем snippet: первые 200 символов текста поста
+                snippet = post.get("text", "")[:_BRAND_SNIPPET_MAX]
+
+                event: dict[str, Any] = {
+                    "event_type": "telegram_leak",
+                    "severity": "low",
+                    "source_type": "telegram_monitor",
+                    "source_name": "telegram_brand_monitor",
+                    "target_domain": domain,
+                    "payload": {
+                        "keyword": matched_keyword,
+                        "channel": f"@{channel}",
+                        "snippet": snippet,
+                        "post_url": post_url,
+                        "post_date": date_str,
+                    },
+                }
+
+                if _send_ingest_event(ingest_url, ingest_headers, event):
+                    totals["sent"] += 1
+
+        except Exception as exc:
+            logger.error(
+                "[tg/brand] Неожиданная ошибка при обработке @%s: %s",
+                channel,
+                exc,
+            )
+
+    logger.info(
+        "[tg/brand] Итого domain=%s channels=%d posts=%d matched=%d sent=%d",
+        domain,
+        totals["channels_checked"],
+        totals["total_posts"],
+        totals["matched"],
+        totals["sent"],
+    )
+    return totals
