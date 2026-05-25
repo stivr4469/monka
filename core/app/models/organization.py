@@ -30,6 +30,10 @@ class Organization(Base, TimestampMixin):
     # starter=3, professional=10, enterprise=999999 (фактически безлимит).
     plan: Mapped[str] = mapped_column(String(32), default=OrgPlan.starter.value, nullable=False)
 
+    # Отрасль организации — используется для Industry Benchmarking (задача 13.F).
+    # Допустимые значения: fintech, healthcare, ecommerce, saas, telecom, media, manufacturing, other.
+    industry: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+
     # MSSP Multi-Tenancy: ссылка на оператора, которому принадлежит эта организация-клиент.
     # Если mssp_owner_id заполнен — MSSP-оператор с этим user.id видит организацию в своей панели.
     # ON DELETE SET NULL: при удалении оператора организации остаются, но связь обнуляется.

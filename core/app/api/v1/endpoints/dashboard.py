@@ -2,6 +2,7 @@
 
 Маршруты:
     GET /api/v1/dashboard/executive — сводный дашборд для руководителя
+    GET /api/v1/dashboard/benchmark — Industry Benchmarking (задача 13.F)
 """
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,7 @@ from app.models.asset import Asset
 from app.models.event import Event
 from app.models.organization import Organization
 from app.models.score_snapshot import ScoreSnapshot
+from app.services.benchmarking import compare_with_benchmark
 from app.services.score_engine import CATEGORY_WEIGHTS, calculate_score
 
 router = APIRouter(tags=["dashboard"])
@@ -283,4 +285,109 @@ async def get_executive_dashboard(
         top_risks=top_risks,
         asset_count=asset_count,
         open_events_by_severity=open_events_by_severity,
+    )
+
+
+# ─── Pydantic-схемы для Industry Benchmarking ────────────────────────────────
+
+class BenchmarkValues(BaseModel):
+    avg: float
+    p25: float
+    p50: float
+    p75: float
+
+
+class CategoryBenchmarkItem(BaseModel):
+    your: float
+    avg: float
+    delta: float
+
+
+class BenchmarkComparison(BaseModel):
+    industry: str
+    your_score: float
+    benchmark: BenchmarkValues
+    percentile: int
+    rank: str
+    category_comparison: dict[str, CategoryBenchmarkItem]
+    peer_count: int
+
+
+class IndustryBenchmarkResponse(BaseModel):
+    industry: str
+    comparison: BenchmarkComparison
+    peer_count: int
+
+
+# ─── GET /dashboard/benchmark ─────────────────────────────────────────────────
+
+@router.get(
+    "/benchmark",
+    response_model=IndustryBenchmarkResponse,
+    summary="Industry Benchmarking — сравнение Security Score с отраслью (задача 13.F)",
+)
+async def get_industry_benchmark_endpoint(
+    db: DBDep,
+    current_user: CurrentUser,
+) -> IndustryBenchmarkResponse:
+    """Сравнивает Security Score организации с анонимным бенчмарком по отрасли.
+
+    Возвращает:
+    - industry: отрасль организации
+    - comparison: детальное сравнение с перцентилем, rank и delta по категориям
+    - peer_count: количество организаций в выборке бенчмарка
+    """
+    org_id = current_user.organization_id
+
+    # Получаем организацию и её отрасль
+    org: Organization | None = None
+    if org_id:
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        org = org_result.scalar_one_or_none()
+
+    # Суперпользователи без org_id — возвращаем пустой бенчмарк по отрасли "other"
+    if org_id is None or org is None:
+        industry = "other"
+        org_score = 0.0
+        category_scores: dict[str, float] = {}
+    else:
+        industry = org.industry or "other"
+
+        # Рассчитываем актуальный score организации
+        score_result = await calculate_score(org_id=org_id, db=db, asset_id=None)
+        org_score = float(score_result.total)
+        category_scores = {
+            cat: float(cs.score)
+            for cat, cs in score_result.categories.items()
+        }
+
+    # Сравниваем с бенчмарком
+    comparison_data = await compare_with_benchmark(
+        org_score=org_score,
+        org_category_scores=category_scores,
+        industry=industry,
+        db=db,
+    )
+
+    # Формируем ответ
+    cat_comparison = {
+        cat: CategoryBenchmarkItem(**vals)
+        for cat, vals in comparison_data["category_comparison"].items()
+    }
+    peer_count: int = comparison_data.get("peer_count", 0)
+
+    return IndustryBenchmarkResponse(
+        industry=comparison_data["industry"],
+        comparison=BenchmarkComparison(
+            industry=comparison_data["industry"],
+            your_score=comparison_data["your_score"],
+            benchmark=BenchmarkValues(**comparison_data["benchmark"]),
+            percentile=comparison_data["percentile"],
+            rank=comparison_data["rank"],
+            category_comparison=cat_comparison,
+            peer_count=peer_count,
+        ),
+        peer_count=peer_count,
     )
