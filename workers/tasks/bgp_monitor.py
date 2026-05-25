@@ -32,7 +32,8 @@ def resolve_ips(domain: str) -> list[str]:
         results = socket.getaddrinfo(domain, None, socket.AF_INET)
         ips = list({r[4][0] for r in results})
         return [ip for ip in ips if not _is_private(ip)]
-    except (socket.gaierror, OSError):
+    except (socket.gaierror, OSError) as exc:
+        logger.warning("[bgp] DNS ошибка для %s: %s", domain, exc)
         return []
 
 

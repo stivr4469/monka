@@ -33,6 +33,7 @@ from app.api.v1.endpoints import (
     reveal,
     s3_scan,
     scheduled_scan,
+    subfinder_scan,
     stealer,
     stealer_sources,
     stix_export,
@@ -72,6 +73,7 @@ api_router.include_router(cookie_scan.router)
 api_router.include_router(takeover_scan.router)
 api_router.include_router(tls_scan.router)
 api_router.include_router(masscan_scan.router)
+api_router.include_router(subfinder_scan.router)
 
 # Certificate Transparency Monitor — crt.sh (задача 12.A)
 api_router.include_router(ct_scan.router)

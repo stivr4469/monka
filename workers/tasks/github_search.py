@@ -8,17 +8,31 @@
   4. "domain.com" token
   5. "domain.com" email
   6. "domain.com" extension:env OR extension:cfg OR extension:ini
+
+Фильтрация false positive:
+  - Списки доменов / domain-ranking файлы
+  - WHOIS-дампы и TLD-списки
+  - Исследовательские датасеты (Tranco, crawl-результаты)
+  - Файлы с явно нерелевантными расширениями (.csv, .html в rankingpath)
+
+Severity:
+  critical — конфигурационные файлы (.env/.cfg/.ini/.config)
+  high     — код с паролями/api_key/secret (py/js/rb/php/go/yaml)
+  medium   — код с token
+  low      — упоминание email в коде
+  skip     — явный false positive
 """
 import logging
+import re
 import time
-from urllib.parse import urlparse
+from pathlib import PurePosixPath
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 GITHUB_SEARCH_URL = "https://api.github.com/search/code"
-# Интервал между запросами — GitHub rate limit: 10 req/min для аутентифицированных
+# GitHub rate limit: 10 req/min для аутентифицированных
 REQUEST_INTERVAL = 7.0
 
 SEARCH_QUERIES = [
@@ -29,6 +43,118 @@ SEARCH_QUERIES = [
     '"{domain}" email',
     '"{domain}" extension:env OR extension:cfg OR extension:ini',
 ]
+
+# Расширения конфиг-файлов → critical
+_CONFIG_EXTENSIONS = {".env", ".cfg", ".ini", ".config", ".conf", ".properties"}
+
+# Расширения кода → контекст определяет severity
+_CODE_EXTENSIONS = {
+    ".py", ".js", ".ts", ".rb", ".php", ".go", ".java", ".cs",
+    ".yaml", ".yml", ".json", ".sh", ".bash", ".zsh",
+}
+
+# Паттерны путей — явные false positive
+_FP_PATH_PATTERNS = re.compile(
+    r"(?i)"
+    r"data/rank/"
+    r"|tld_lists/"
+    r"|Analysis_Tranco"
+    r"|RESULTS_EC2/"
+    r"|/headless_timing"
+    r"|/invalid_html"
+    r"|domains2scan/"
+    r"|web\d+_\d+\."
+    r"|/shards/"
+    r"|whois/tld"
+    r"|chunk_\d+"
+    r"|top[\-_]?\d+k?"     # top1m, top-10k и т.п.
+    r"|tranco"
+    r"|alexa"
+    r"|majestic"
+    r"|umbrella"
+    r"|quantcast"
+    r"|domainlist"
+    r"|domain.?list"
+    r"|rank.?list"
+)
+
+# Паттерны имён репозиториев — явные false positive
+_FP_REPO_PATTERNS = re.compile(
+    r"(?i)"
+    r"tranco"
+    r"|domain.?list"
+    r"|rank.?list"
+    r"|tld.?list"
+    r"|whois.?data"
+    r"|crawl.?data"
+    r"|pii.?xel"
+    r"|piidb"
+    r"|privadb"
+    r"|randomwebsite"
+    r"|web.?crawl"
+    r"|site.?mirror"
+    r"|domain.?scan"
+    r"|nextlist"
+    r"|reviewnav.?handler"
+    r"|alexa.?top"
+    r"|majestic.?million"
+)
+
+# Ключевые слова в имени файла, указывающие на списки/дампы
+_FP_FILENAME_PATTERNS = re.compile(
+    r"(?i)"
+    r"(top|rank|list|dump|crawl|index|domain|tld|whois|mirror)\d*\."
+    r"|^\d+\.txt$"          # просто число.txt — обычно список
+    r"|_timings?\."
+    r"|_response\."
+    r"|_list\."
+)
+
+
+def _is_false_positive(repo_name: str, file_path: str) -> bool:
+    """Возвращает True если результат — явный false positive."""
+    if _FP_REPO_PATTERNS.search(repo_name):
+        return True
+    if _FP_PATH_PATTERNS.search(file_path):
+        return True
+    filename = PurePosixPath(file_path).name
+    if _FP_FILENAME_PATTERNS.search(filename):
+        return True
+    return False
+
+
+def _classify_severity(query: str, file_path: str) -> str:
+    """
+    Определяет severity по расширению файла и типу запроса.
+
+    critical — конфиг-файл (.env/.cfg/.ini/.config)
+    high     — код + password/api_key/secret
+    medium   — код + token/secret
+    low      — код + email / нераспознанный файл
+    """
+    ext = PurePosixPath(file_path).suffix.lower()
+    q = query.lower()
+
+    if ext in _CONFIG_EXTENSIONS:
+        return "critical"
+
+    is_code = ext in _CODE_EXTENSIONS
+
+    if is_code:
+        if any(kw in q for kw in ("password", "api_key")):
+            return "high"
+        if any(kw in q for kw in ("secret",)):
+            return "high"
+        if "token" in q:
+            return "medium"
+        if "email" in q:
+            return "low"
+
+    # Неизвестное расширение, но запрос на credentials
+    if any(kw in q for kw in ("password", "api_key", "secret")):
+        return "medium"
+
+    return "low"
 
 
 def _build_headers(github_token: str) -> dict:
@@ -53,7 +179,6 @@ def _search_once(query: str, headers: dict, timeout: float = 15.0) -> list[dict]
     if r.status_code == 403:
         logger.warning("GitHub rate limit exceeded, sleeping 60s")
         time.sleep(60)
-        # Повторная попытка
         try:
             r = httpx.get(GITHUB_SEARCH_URL, headers=headers, params=params, timeout=timeout)
         except Exception as exc:
@@ -64,8 +189,7 @@ def _search_once(query: str, headers: dict, timeout: float = 15.0) -> list[dict]
         logger.warning("GitHub search returned %d for query: %s", r.status_code, query)
         return []
 
-    data = r.json()
-    return data.get("items", [])
+    return r.json().get("items", [])
 
 
 def search_github(
@@ -76,15 +200,16 @@ def search_github(
 ) -> dict:
     """
     Ищет упоминания домена в публичных GitHub репозиториях.
-    Найденные совпадения отправляет в Core API как события типа github_leak.
+    Найденные совпадения (после фильтрации FP) отправляет в Core API
+    как события типа github_leak.
 
-    Возвращает: {"queries": N, "found": M, "sent": K, "errors": E}
+    Возвращает: {"queries": N, "found": M, "filtered": F, "sent": K, "errors": E}
     """
     ingest_url = f"{core_api_url}/api/v1/internal/ingest"
     headers_ingest = {"Authorization": f"Bearer {internal_secret}"}
     headers_gh = _build_headers(github_token)
 
-    total_found = sent = errors = 0
+    total_found = filtered = sent = errors = 0
 
     for query_tpl in SEARCH_QUERIES:
         query = query_tpl.format(domain=domain)
@@ -96,21 +221,29 @@ def search_github(
         for item in items:
             repo_name = item.get("repository", {}).get("full_name", "")
             file_path = item.get("path", "")
-            file_url = item.get("html_url", "")
-            repo_url = item.get("repository", {}).get("html_url", "")
+            file_url  = item.get("html_url", "")
+            repo_url  = item.get("repository", {}).get("html_url", "")
+
+            if _is_false_positive(repo_name, file_path):
+                filtered += 1
+                logger.debug("[github] FP отфильтрован: %s / %s", repo_name, file_path)
+                continue
+
+            severity = _classify_severity(query, file_path)
 
             event = {
                 "event_type": "github_leak",
-                "severity": "high",
+                "severity": severity,
                 "source_type": "github_search",
                 "source_name": "github-search-worker",
                 "target_domain": domain,
                 "payload": {
-                    "query": query,
-                    "repo": repo_name,
+                    "query":     query,
+                    "repo":      repo_name,
                     "file_path": file_path,
-                    "file_url": file_url,
-                    "repo_url": repo_url,
+                    "file_url":  file_url,
+                    "repo_url":  repo_url,
+                    "severity_reason": _severity_reason(severity, query, file_path),
                 },
             }
 
@@ -125,23 +258,31 @@ def search_github(
                 logger.error("ingest error: %s", exc)
                 errors += 1
 
-        # Пауза между запросами чтобы не попасть в rate limit
         time.sleep(REQUEST_INTERVAL)
 
     logger.info(
-        "[github] domain=%s queries=%d found=%d sent=%d errors=%d",
-        domain,
-        len(SEARCH_QUERIES),
-        total_found,
-        sent,
-        errors,
+        "[github] domain=%s queries=%d found=%d filtered=%d sent=%d errors=%d",
+        domain, len(SEARCH_QUERIES), total_found, filtered, sent, errors,
     )
     return {
         "queries": len(SEARCH_QUERIES),
         "found": total_found,
+        "filtered": filtered,
         "sent": sent,
         "errors": errors,
     }
+
+
+def _severity_reason(severity: str, query: str, file_path: str) -> str:
+    """Краткое объяснение почему выбран данный severity."""
+    ext = PurePosixPath(file_path).suffix.lower()
+    if severity == "critical":
+        return f"Конфигурационный файл ({ext})"
+    if severity == "high":
+        return f"Код ({ext}) + ключевое слово из запроса: {query.split()[-1]}"
+    if severity == "medium":
+        return f"Код ({ext}) + token"
+    return f"Упоминание домена в {ext or 'файле'}"
 
 
 # ── Celery-обёртка ────────────────────────────────────────────────────────────
@@ -157,10 +298,7 @@ try:
         name="workers.tasks.github_search.search_github_task",
     )
     def search_github_task(self, domain: str) -> dict:
-        """
-        Celery-задача: поиск упоминаний домена в GitHub.
-        Использует GITHUB_TOKEN из конфигурации воркера.
-        """
+        """Celery-задача: поиск упоминаний домена в GitHub."""
         try:
             return search_github(
                 domain=domain,
@@ -172,5 +310,4 @@ try:
             raise self.retry(exc=exc)
 
 except ImportError:
-    # Celery не установлен — модуль используется без воркера (тесты и т.д.)
     pass

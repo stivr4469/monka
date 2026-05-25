@@ -8,6 +8,7 @@ Certificate Transparency Monitor.
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -204,25 +205,47 @@ def fetch_ct_certs(domain: str) -> list[dict]:
         "output": "json",
         "deduplicate": "Y",
     }
-    try:
-        with httpx.Client(timeout=_CRT_TIMEOUT) as client:
-            resp = client.get(_CRT_SH_URL, params=params)
+    _retries = 3
+    _backoff = [2, 5, 10]  # секунды между попытками
+    last_exc: Exception | None = None
 
-        if resp.status_code != 200:
+    for attempt in range(_retries):
+        try:
+            with httpx.Client(timeout=_CRT_TIMEOUT) as client:
+                resp = client.get(_CRT_SH_URL, params=params)
+
+            if resp.status_code == 200:
+                return resp.json()
+
+            if resp.status_code in (502, 503, 504):
+                logger.warning(
+                    "[ct_monitor] crt.sh вернул %d для %s (попытка %d/%d)",
+                    resp.status_code, domain, attempt + 1, _retries,
+                )
+                if attempt < _retries - 1:
+                    time.sleep(_backoff[attempt])
+                continue
+
             logger.warning(
                 "[ct_monitor] crt.sh вернул статус %d для %s",
                 resp.status_code, domain,
             )
             return []
 
-        return resp.json()
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "[ct_monitor] Таймаут crt.sh для %s (попытка %d/%d)",
+                domain, attempt + 1, _retries,
+            )
+            last_exc = exc
+            if attempt < _retries - 1:
+                time.sleep(_backoff[attempt])
+        except Exception as exc:
+            logger.error("[ct_monitor] Ошибка запроса crt.sh для %s: %s", domain, exc)
+            return []
 
-    except httpx.TimeoutException:
-        logger.warning("[ct_monitor] Таймаут запроса crt.sh для домена %s", domain)
-        return []
-    except Exception as exc:
-        logger.error("[ct_monitor] Ошибка запроса crt.sh для %s: %s", domain, exc)
-        return []
+    logger.error("[ct_monitor] crt.sh недоступен для %s после %d попыток: %s", domain, _retries, last_exc)
+    return []
 
 
 # ──────────────────────────────────────────────

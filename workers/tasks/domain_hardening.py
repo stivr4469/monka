@@ -49,13 +49,22 @@ _INGEST_OK = frozenset({"accepted", "duplicate"})
 # Отдельные проверки
 # ──────────────────────────────────────────────
 
+_PUBLIC_DNS = ["8.8.8.8", "8.8.4.4"]
+
+
+def _make_resolver() -> dns.resolver.Resolver:
+    """Создаёт резолвер с публичными DNS-серверами (не системный)."""
+    r = dns.resolver.Resolver(configure=False)
+    r.nameservers = _PUBLIC_DNS
+    r.lifetime = _DNS_TIMEOUT
+    return r
+
+
 def _check_spf(domain: str) -> list[dict]:
     """Проверяет наличие SPF TXT-записи на apex-домене."""
     issues = []
     try:
-        resolver = dns.resolver.Resolver()
-        resolver.lifetime = _DNS_TIMEOUT
-        answers = resolver.resolve(domain, "TXT")
+        answers = _make_resolver().resolve(domain, "TXT")
         has_spf = any(
             b"v=spf1" in rdata.to_text().encode()
             for rdata in answers
@@ -66,13 +75,15 @@ def _check_spf(domain: str) -> list[dict]:
                 "description": f"Нет SPF-записи для {domain}. Email-спуфинг возможен.",
                 "severity": _ISSUE_SEVERITY["no_spf"],
             })
-    except (dns.exception.DNSException, Exception) as exc:
-        logger.debug("[hardening][spf] %s: %s", domain, exc)
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
         issues.append({
             "check": "no_spf",
-            "description": f"Не удалось получить TXT-записи {domain}: {exc}",
+            "description": f"Нет TXT-записей / домен не существует: {domain}. SPF не настроен.",
             "severity": _ISSUE_SEVERITY["no_spf"],
         })
+    except Exception as exc:
+        # SERVFAIL, таймаут, сетевая ошибка — не создаём ложный алерт
+        logger.warning("[hardening][spf] %s: DNS ошибка — %s", domain, exc)
     return issues
 
 
@@ -81,9 +92,7 @@ def _check_dmarc(domain: str) -> list[dict]:
     issues = []
     dmarc_host = f"_dmarc.{domain}"
     try:
-        resolver = dns.resolver.Resolver()
-        resolver.lifetime = _DNS_TIMEOUT
-        answers = resolver.resolve(dmarc_host, "TXT")
+        answers = _make_resolver().resolve(dmarc_host, "TXT")
         has_dmarc = any(
             b"v=DMARC1" in rdata.to_text().encode()
             for rdata in answers
@@ -109,9 +118,7 @@ def _check_axfr(domain: str) -> list[dict]:
     """Пробует AXFR (Zone Transfer) — если разрешено, серьёзная утечка конфигурации."""
     issues = []
     try:
-        resolver = dns.resolver.Resolver()
-        resolver.lifetime = _DNS_TIMEOUT
-        ns_answers = resolver.resolve(domain, "NS")
+        ns_answers = _make_resolver().resolve(domain, "NS")
         ns_hosts = [str(ns).rstrip(".") for ns in ns_answers]
 
         for ns_host in ns_hosts[:3]:  # проверяем максимум 3 NS

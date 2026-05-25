@@ -133,7 +133,7 @@ def detect_phishing_domains(
     Генерирует тайпосквот-варианты домена и проверяет каждый через DNS.
 
     Резолвящиеся варианты отправляются в Core API как события с типом
-    'vulnerability' и severity='high'.
+    'phishing_domain' и severity='high'.
 
     Возвращает: {"checked": N, "found": M, "sent": K}
     """
@@ -196,9 +196,9 @@ def detect_phishing_domains(
                 domain, variant_domain, technique, resolved_ip,
             )
             events.append({
-                "event_type": "vulnerability",
+                "event_type": "phishing_domain",
                 "severity": "high",
-                "source_type": "nuclei",  # ближайший тип для внешней проверки
+                "source_type": "osint",
                 "source_name": "phishing_detector",
                 "target_domain": domain,
                 "payload": {

@@ -219,10 +219,39 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
-## 8. СЛЕДУЮЩИЕ ШАГИ (если продолжать)
+## 8. ИСПРАВЛЕНИЯ БАГОВ (следующая сессия — реальный тест creditplus.ua)
+
+| # | Severity | Файл | Проблема → Исправление |
+|---|----------|------|------------------------|
+| 5 | HIGH | `port_scanner.py` | `"ip": ip` (параметр) → `"ip": host_ip` (из XML nmap) |
+| 6 | HIGH | `domain_hardening.py` | системный DNS (SERVFAIL) → false SPF-event; исправлено: `_make_resolver()` с 8.8.8.8/8.8.4.4, ловить только NXDOMAIN/NoAnswer |
+| 7 | MEDIUM | `subfinder.py` | crt.sh возвращал домены других зон; добавлен фильтр `endswith(f".{domain}")` |
+| 8 | MEDIUM | `ct_monitor.py` | нет retry на 502/503/504 от crt.sh; добавлен цикл 3 попытки с backoff |
+| 9 | MEDIUM | `bgp_monitor.py` | тихая ошибка DNS; добавлен `logger.warning` с текстом исключения |
+| 10 | MEDIUM | `paste_monitor.py` | неинформативный 401/403; добавлен обработчик с текстом "нет API-ключа" |
+| 12 | MEDIUM | `phishing_detector.py` | `event_type="vulnerability"` → `"phishing_domain"`, `source_type` → `"osint"` |
+| 13 | LOW | `intelx_api.py` | нет предупреждения на 403; добавлен хэндлер |
+| — | HIGH | `core/.env` | `GITHUB_TOKEN=` пустой → скопирован из корневого `.env` |
+| — | HIGH | `tor_client.py` | Tor cold-start: одна попытка = таймаут; добавлено 3 попытки с паузой 5 сек |
+| — | HIGH | `github_search.py` | все результаты `high`, FP не фильтровались → полный рефактор: `_is_false_positive()`, `_classify_severity()`, `_severity_reason()`, счётчик `filtered` |
+
+### GitHub FP-фильтр (детали):
+```python
+# 12 результатов для creditplus.ua → все FP (domain-ranking lists, research datasets)
+# После фильтра: filtered=12, sent=0  — правильно, реальных утечек нет
+# Severity logic:
+#   critical — .env/.cfg/.ini/.config  
+#   high     — .py/.js/.rb + password/api_key/secret
+#   medium   — .py/.js + token
+#   low      — .py/.js + email / неизвестное расширение
+```
+
+---
+
+## 9. СЛЕДУЮЩИЕ ШАГИ (если продолжать)
 
 - MEDIUM: Race condition в /tmp файлах при параллельных сканах → fcntl.flock или Redis
 - MEDIUM: N+1 запросы в /comparison/portfolio → asyncio.gather()
 - MEDIUM: Вынести validate_domain и _safe_domain_filename в core/app/utils/
-- Phase 12.F / 13.J: Senior code review по всему добавленному коду (можно запустить python-reviewer агент)
+- Phase 12.F / 13.J: Senior code review по всему добавленному коду (python-reviewer агент)
 - Реальное тестирование: запуск с настоящими CENSYS_API_ID, JIRA_URL, ANTHROPIC_API_KEY

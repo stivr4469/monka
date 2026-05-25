@@ -84,6 +84,7 @@ def _org_event_query(organization_id: str):
     )
 
 
+@router.get("", response_model=EventListResponse, include_in_schema=False)
 @router.get("/", response_model=EventListResponse)
 async def list_events(
     db: DBDep,

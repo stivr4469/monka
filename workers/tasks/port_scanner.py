@@ -172,6 +172,10 @@ def _parse_nmap_xml(xml_output: str, ip: str) -> list[dict[str, Any]]:
     ports: list[dict[str, Any]] = []
 
     for host in root.findall("host"):
+        # Берём IP из XML (nmap сам фиксирует адрес); fallback на переданный ip
+        addr_elem = host.find("address[@addrtype='ipv4']") or host.find("address[@addrtype='ipv6']")
+        host_ip = addr_elem.get("addr", ip) if addr_elem is not None else ip
+
         for port_elem in host.findall(".//port"):
             state_elem = port_elem.find("state")
             if state_elem is None or state_elem.get("state") != "open":
@@ -198,7 +202,7 @@ def _parse_nmap_xml(xml_output: str, ip: str) -> list[dict[str, Any]]:
                 "protocol": protocol,
                 "service":  service_name,
                 "version":  service_version,
-                "ip":       ip,
+                "ip":       host_ip,
             })
 
     return ports

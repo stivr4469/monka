@@ -90,36 +90,57 @@ def check_tor_available() -> bool:
         logger.warning("[tor_client] Tor-клиент недоступен (SOCKS5 не поддерживается)")
         return False
 
-    try:
-        with client:
-            response = client.get(_TOR_CHECK_URL, timeout=_TOR_TIMEOUT)
-            if response.status_code != 200:
-                logger.warning(
-                    "[tor_client] check.torproject.org вернул HTTP %d",
-                    response.status_code,
-                )
-                return False
+    # До 3 попыток — первая цепь может устанавливаться до ~30 сек после старта демона
+    _attempts = 3
+    _retry_delay = 5  # секунды между попытками
+    import time
 
-            data = response.json()
-            is_tor: bool = bool(data.get("IsTor", False))
-            ip_addr: str = data.get("IP", "unknown")
+    for attempt in range(1, _attempts + 1):
+        try:
+            with client:
+                response = client.get(_TOR_CHECK_URL, timeout=_TOR_TIMEOUT)
+                if response.status_code != 200:
+                    logger.warning(
+                        "[tor_client] check.torproject.org вернул HTTP %d (попытка %d/%d)",
+                        response.status_code, attempt, _attempts,
+                    )
+                    if attempt < _attempts:
+                        time.sleep(_retry_delay)
+                        client = get_tor_client()
+                        if client is None:
+                            return False
+                        continue
+                    return False
 
-            if is_tor:
-                logger.info("[tor_client] Tor доступен, выходной IP: %s", ip_addr)
-            else:
-                logger.warning(
-                    "[tor_client] Запрос прошёл через %s, но НЕ через Tor", ip_addr
-                )
+                data = response.json()
+                is_tor: bool = bool(data.get("IsTor", False))
+                ip_addr: str = data.get("IP", "unknown")
 
-            return is_tor
+                if is_tor:
+                    logger.info("[tor_client] Tor доступен, выходной IP: %s", ip_addr)
+                else:
+                    logger.warning(
+                        "[tor_client] Запрос прошёл через %s, но НЕ через Tor", ip_addr
+                    )
+                return is_tor
 
-    except httpx.ConnectError as exc:
-        # Tor-демон не запущен или порт 9050 недоступен
-        logger.warning("[tor_client] Tor недоступен (ConnectError): %s", exc)
-        return False
-    except httpx.TimeoutException as exc:
-        logger.warning("[tor_client] Tor недоступен (таймаут): %s", exc)
-        return False
-    except Exception as exc:
-        logger.warning("[tor_client] Неожиданная ошибка при проверке Tor: %s", exc)
-        return False
+        except httpx.ConnectError as exc:
+            logger.warning("[tor_client] Tor недоступен ConnectError (попытка %d/%d): %s", attempt, _attempts, exc)
+            if attempt < _attempts:
+                time.sleep(_retry_delay)
+                client = get_tor_client()
+                if client is None:
+                    return False
+        except httpx.TimeoutException as exc:
+            logger.warning("[tor_client] Tor таймаут (попытка %d/%d): %s — цепи ещё устанавливаются?", attempt, _attempts, exc)
+            if attempt < _attempts:
+                time.sleep(_retry_delay)
+                client = get_tor_client()
+                if client is None:
+                    return False
+        except Exception as exc:
+            logger.warning("[tor_client] Неожиданная ошибка при проверке Tor: %s", exc)
+            return False
+
+    logger.warning("[tor_client] Tor недоступен после %d попыток", _attempts)
+    return False

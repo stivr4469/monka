@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from workers.tasks.bulk_ingest import bulk_ingest
+from tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
 

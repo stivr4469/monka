@@ -247,7 +247,13 @@ def scan_domain(self, domain: str) -> dict:
     # ── Обогащение через crt.sh (задача 8.A.1 / 8.A.2) ──────────────────────
     # Ошибка crt.sh не должна ломать основной скан: весь блок обёрнут в try/except
     try:
-        crt_subdomains = fetch_crt_sh(domain)
+        crt_subdomains_raw = fetch_crt_sh(domain)
+        # Оставляем только поддомены целевого домена (crt.sh может вернуть чужие)
+        _target_suffix = f".{domain}"
+        crt_subdomains = [
+            s for s in crt_subdomains_raw
+            if s == domain or s.endswith(_target_suffix)
+        ]
 
         # Отфильтровываем поддомены, которые subfinder уже нашёл
         subfinder_set = set(subdomains)
@@ -382,3 +388,67 @@ def scan_domain_all_active(self) -> None:
             queued += 1
 
     logger.info("Плановая переинвентаризация: поставлено %d доменов в очередь", queued)
+
+
+def run_subfinder_standalone(
+    domain: str,
+    core_api_url: str,
+    internal_secret: str,
+) -> dict:
+    """
+    Точка входа для вызова из scan-эндпоинта (fire-and-forget через run_in_executor).
+    Запускает subfinder + crt.sh без Celery, используя переданный core_api_url.
+    """
+    from tasks.bulk_ingest import bulk_ingest as _bulk_ingest
+    from datetime import datetime, timezone
+
+    domain = domain.strip().lower()
+    logger.info("[subfinder_standalone] Начало сканирования domain=%s", domain)
+
+    # crt.sh — основной источник (subfinder бинарник может отсутствовать)
+    crt_subdomains = fetch_crt_sh(domain)
+
+    # Фильтруем: только поддомены целевого домена
+    target_suffix = f".{domain}"
+    crt_subdomains = [
+        s for s in crt_subdomains
+        if s == domain or s.endswith(target_suffix)
+    ]
+
+    is_first_run = _load_known_subdomains(domain) is None
+    try:
+        new_assets = check_asset_drift(crt_subdomains, domain)
+        new_asset_set = {s.lower() for s in new_assets}
+    except Exception:
+        new_assets = []
+        new_asset_set = set()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    events = [
+        {
+            "event_type": "subdomain",
+            "severity": "info" if is_first_run else (
+                "medium" if sub.lower() in new_asset_set else "info"
+            ),
+            "source_type": "crt.sh",
+            "source_name": "crt.sh",
+            "target_domain": domain,
+            "payload": {
+                "subdomain": sub,
+                "new_asset": not is_first_run and sub.lower() in new_asset_set,
+            },
+            "detected_at": now_iso,
+        }
+        for sub in crt_subdomains
+    ]
+
+    sent = 0
+    if events:
+        result = _bulk_ingest(events, core_api_url, internal_secret)
+        sent = result.get("sent", 0)
+
+    logger.info(
+        "[subfinder_standalone] Итого domain=%s subdomains=%d sent=%d",
+        domain, len(crt_subdomains), sent,
+    )
+    return {"domain": domain, "subdomains": len(crt_subdomains), "sent": sent}

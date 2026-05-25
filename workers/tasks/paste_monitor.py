@@ -155,6 +155,13 @@ def _fetch_pastebin_list(limit: int = PASTEBIN_LIMIT) -> list[dict[str, Any]]:
             params={"limit": limit},
             timeout=HTTP_TIMEOUT,
         )
+        if r.status_code in (401, 403):
+            logger.warning(
+                "[paste][pastebin] HTTP %d — API-ключ отсутствует или недействителен. "
+                "Установите PASTEBIN_API_KEY в переменных окружения воркера.",
+                r.status_code,
+            )
+            return []
         if r.status_code != 200:
             logger.warning("[paste][pastebin] список paste вернул HTTP %d", r.status_code)
             return []
@@ -273,6 +280,13 @@ def _iter_pastee_items(limit: int = PASTEE_LIMIT) -> Iterator[dict[str, Any]]:
     while next_url and fetched < limit:
         try:
             r = httpx.get(next_url, params=params, timeout=HTTP_TIMEOUT)
+            if r.status_code in (401, 403):
+                logger.warning(
+                    "[paste][pastee] HTTP %d — API-ключ отсутствует или недействителен. "
+                    "Установите PASTEE_API_KEY в переменных окружения воркера.",
+                    r.status_code,
+                )
+                break
             if r.status_code != 200:
                 logger.warning("[paste][pastee] список paste вернул HTTP %d", r.status_code)
                 break

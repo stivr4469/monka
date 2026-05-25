@@ -109,6 +109,13 @@ def _search_phonebook(
             logger.warning("[intelx] Лимит запросов IntelX исчерпан (402 Payment Required)")
             return []
 
+        if response.status_code == 403:
+            logger.warning(
+                "[intelx] HTTP 403 Forbidden — API-ключ IntelX недействителен или отсутствует. "
+                "Установите INTELX_API_KEY в переменных окружения воркера."
+            )
+            return []
+
         if response.status_code != 200:
             logger.warning("[intelx] HTTP %d при инициации поиска", response.status_code)
             return []
