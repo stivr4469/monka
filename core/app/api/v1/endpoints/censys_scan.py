@@ -104,7 +104,7 @@ async def censys_scan(
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     # Запускаем воркер в ThreadPoolExecutor (fire-and-forget)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     loop.run_in_executor(
         get_executor(),
         enrich_domain_with_censys,

@@ -2,12 +2,16 @@
 Industry Benchmarking — сравнение Security Score с анонимным бенчмарком отрасли.
 Бенчмарки обновляются при каждом расчёте score и хранятся агрегированно в БД.
 """
+import logging
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any
 
 from app.models.organization import Organization
 from app.models.score_snapshot import ScoreSnapshot
+
+logger = logging.getLogger(__name__)
 
 # ─── Статичные бенчмарки по отраслям (fallback при отсутствии данных в БД) ──────
 # Основаны на публичных отраслевых отчётах о кибербезопасности (SecurityScorecard,
@@ -189,8 +193,8 @@ async def get_industry_benchmark(
                         for cat in _CATEGORY_KEYS
                     },
                 }
-    except Exception:
-        # При любой ошибке БД — тихий fallback на статику
+    except Exception as exc:
+        logger.warning("[benchmark] Ошибка получения live данных для '%s': %s", industry, exc)
         pass
 
     # Fallback: статичные бенчмарки

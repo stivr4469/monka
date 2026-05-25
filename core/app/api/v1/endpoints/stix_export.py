@@ -23,7 +23,7 @@ from app.models.asset import Asset
 from app.models.event import Event
 
 # Подключаем workers в sys.path для импорта stix_export
-_workers_path = str(Path(__file__).parents[6] / "workers")
+_workers_path = str(Path(__file__).parents[5] / "workers")
 if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 

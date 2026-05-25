@@ -104,7 +104,7 @@ async def trigger_bgp_scan(
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(
+    loop.run_in_executor(
         get_executor(),
         check_bgp,
         domain,

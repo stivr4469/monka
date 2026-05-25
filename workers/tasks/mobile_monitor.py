@@ -58,12 +58,16 @@ def _load_seen_ids(domain: str) -> set[str]:
     return set()
 
 
+_MAX_SEEN_IDS = 5000
+
+
 def _save_seen_ids(domain: str, seen: set[str]) -> None:
-    """Сохраняет множество обработанных app_id в кэш."""
+    """Сохраняет множество обработанных app_id в кэш (не более _MAX_SEEN_IDS записей)."""
     cache_path = _get_seen_cache_path(domain)
     try:
+        entries = sorted(seen)[-_MAX_SEEN_IDS:]
         cache_path.write_text(
-            json.dumps(sorted(seen), ensure_ascii=False),
+            json.dumps(entries, ensure_ascii=False),
             encoding="utf-8",
         )
     except Exception as exc:

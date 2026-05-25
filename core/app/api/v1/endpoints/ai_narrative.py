@@ -16,10 +16,11 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DBDep
 from app.models.asset import Asset
 from app.models.event import Event
+from app.models.organization import Organization
 from app.services.score_engine import calculate_score
 
 # Добавляем путь к workers чтобы импортировать ai_narrative task
-_workers_path = str(Path(__file__).parents[6] / "workers")
+_workers_path = str(Path(__file__).parents[5] / "workers")
 if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 
@@ -65,6 +66,13 @@ async def generate_narrative(
 
     if asset is None or asset.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Актив не найден")
+
+    # Получаем название организации для отчёта
+    org_result = await db.execute(
+        select(Organization).where(Organization.id == current_user.organization_id)
+    )
+    org = org_result.scalar_one_or_none()
+    org_display_name = org.name if org else current_user.organization_id
 
     # Рассчитываем Security Score для актива
     score_result = await calculate_score(
@@ -120,7 +128,7 @@ async def generate_narrative(
         score=float(score_result.total),
         category_scores=category_scores,
         top_risks=top_risks,
-        org_name=current_user.organization_id,
+        org_name=org_display_name,
     )
 
     # Определяем использованную модель: если API ключ есть и SDK доступен — Claude,
