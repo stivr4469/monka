@@ -20,6 +20,20 @@ class EventType(str, Enum):
     FORUM_MENTION = "forum_mention"
     TELEGRAM_LEAK = "telegram_leak"
     PASTE_MENTION = "paste_mention"
+    TECH_PROFILE = "tech_profile"
+    TLS_FINGERPRINT = "tls_fingerprint"
+    DOMAIN_HARDENING = "domain_hardening"
+    ACTIVE_SESSION_LEAK = "active_session_leak"
+    SESSION_LEAK = "session_leak"
+    PASTE_LEAK = "paste_leak"
+    HUMAN_INTEL = "human_intel"
+    ASSET_DRIFT = "asset_drift"
+    PHISHING_DOMAIN = "phishing_domain"
+    CREDENTIAL_LEAK = "credential_leak"
+    SUBDOMAIN_TAKEOVER = "subdomain_takeover"
+    TLS_EXPIRY = "tls_expiry"
+    OPEN_S3_BUCKET = "open_s3_bucket"
+    GITHUB_SECRET_LEAK = "github_secret_leak"
 
 
 class Severity(str, Enum):
@@ -43,6 +57,16 @@ class SourceType(str, Enum):
     INTELX = "intelx"
     TELEGRAM = "telegram"
     PASTE = "paste"
+    SCANNER = "scanner"
+    COOKIE_VALIDATOR = "cookie_validator"
+    DARKNET_MONITOR = "darknet_monitor"
+    ENRICHMENT = "enrichment"
+    OSINT = "osint"
+    PASTE_MONITOR = "paste_monitor"
+    STEALER_SOURCE = "stealer_source"
+    TELEGRAM_MONITOR = "telegram_monitor"
+    TELEGRAM_STEALER = "telegram_stealer"
+    CRT_SH = "crt.sh"
 
 
 class NormalizedEvent(BaseModel):

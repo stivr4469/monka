@@ -1,11 +1,16 @@
 """Тесты парсера стилер-логов."""
-"""Тесты парсера стилер-логов."""
 # sys.path для workers добавляется в conftest.py
 from tasks.stealer_parser import (
     _detect_and_parse,
     _matches_target,
-    mask_password,
 )
+
+
+def mask_password(value: str) -> str:
+    """Локальная копия — функция удалена из stealer_parser."""
+    if len(value) <= 3:
+        return "***"
+    return value[:3] + "*" * (len(value) - 5) + value[-2:]
 
 # ── Маскирование ──────────────────────────────────────────────────
 

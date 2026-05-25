@@ -1,9 +1,22 @@
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class AssetCreate(BaseModel):
     domain: str = Field(..., min_length=3, max_length=255)
     description: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, v: str) -> str:
+        v = v.strip().lower()
+        if "://" in v or "/" in v:
+            raise ValueError("Домен не должен содержать схему (://) или путь (/)")
+        pattern = r"^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$"
+        if not re.match(pattern, v):
+            raise ValueError("Недопустимый формат домена")
+        return v
 
 
 class AssetUpdate(BaseModel):

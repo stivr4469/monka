@@ -90,10 +90,13 @@ def _resolve_ip(domain: str) -> list[str]:
     Возвращает дедуплицированный список.
     """
     try:
+        socket.setdefaulttimeout(_DNS_TIMEOUT)
         infos = socket.getaddrinfo(domain, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
         logger.warning("[port_scanner][resolve] %s: %s", domain, exc)
         return []
+    finally:
+        socket.setdefaulttimeout(None)
 
     seen: set[str] = set()
     result: list[str] = []

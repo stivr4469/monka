@@ -79,6 +79,14 @@ def validate_secrets(s: Settings) -> None:
         raise ValueError(
             "INTERNAL_API_SECRET не изменён. Установите безопасное значение в .env"
         )
+    if s.FIRST_SUPERUSER_PASSWORD in _UNSAFE_DEFAULTS:
+        raise ValueError(
+            "FIRST_SUPERUSER_PASSWORD не изменён. Установите безопасное значение в .env"
+        )
+    if s.ALGORITHM not in {"HS256", "HS384", "HS512"}:
+        raise ValueError(
+            f"Небезопасный JWT алгоритм: {s.ALGORITHM!r}. Допустимы: HS256, HS384, HS512"
+        )
     if s.DEV_MODE:
         import logging
         logging.getLogger(__name__).warning(

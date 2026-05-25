@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DBDep
 from app.core.config import settings
+from app.models.asset import Asset
 from app.models.event import Event
 from app.workers_client import ensure_workers_path, get_executor
 
@@ -194,9 +195,16 @@ async def get_breach_results(
     Возвращает последние события email_breach.
     Опциональный фильтр по домену через query-параметр ?domain=
     """
+    if current_user.organization_id is None:
+        return []
+
     q = (
         select(Event)
-        .where(Event.event_type == "email_breach")
+        .join(Asset, Event.asset_id == Asset.id)
+        .where(
+            Event.event_type == "email_breach",
+            Asset.organization_id == current_user.organization_id,
+        )
         .order_by(Event.detected_at.desc())
         .limit(limit)
     )

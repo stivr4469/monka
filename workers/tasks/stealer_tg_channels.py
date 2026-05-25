@@ -30,6 +30,7 @@
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,14 @@ try:
     _TELETHON_AVAILABLE = True
 except ImportError:
     pass
+
+# 5c: импорт на уровне модуля, вне цикла
+try:
+    from stealer_parser import parse_stealer_log as _parse_stealer_log  # type: ignore[import]
+    _STEALER_PARSER_AVAILABLE = True
+except ImportError:
+    _STEALER_PARSER_AVAILABLE = False
+    _parse_stealer_log = None  # type: ignore[assignment]
 
 
 def _check_setup() -> str | None:
@@ -176,21 +185,43 @@ def scan_tg_stealer_channels(
                                 from telethon.tl.types import DocumentAttributeFilename
                                 if isinstance(attr, DocumentAttributeFilename):
                                     name = attr.file_name
-                            if name.lower().endswith((".txt", ".zip", ".log", ".csv")):
+                            # 5a: Пропускаем файлы > 50 МБ
+                            if msg.document.size > 50 * 1024 * 1024:
+                                logger.warning(
+                                    "[tg-stealer] @%s msg_id=%d: файл '%s' превышает 50 МБ (%d байт), пропускаем",
+                                    channel, msg.id, name, msg.document.size,
+                                )
+                            elif name.lower().endswith((".txt", ".zip", ".log", ".csv")):
+                                tmp_path: str | None = None
                                 try:
                                     file_bytes = client.download_media(msg, file=bytes)
                                     if file_bytes:
-                                        sys.path.insert(0, str(Path(__file__).parent))
-                                        from stealer_parser import parse_stealer_log
-                                        result = parse_stealer_log(
-                                            file_bytes, name, [domain],
-                                            core_api_url, internal_secret,
-                                        )
-                                        matched += result.get("matched", 0)
-                                        sent    += result.get("sent", 0)
-                                        errors  += result.get("errors", 0)
+                                        # 5b: bytes → Path через временный файл
+                                        with tempfile.NamedTemporaryFile(
+                                            suffix=Path(name).suffix or ".zip",
+                                            delete=False,
+                                        ) as tmp_fh:
+                                            tmp_fh.write(file_bytes)
+                                            tmp_path = tmp_fh.name
+                                        if not _STEALER_PARSER_AVAILABLE:
+                                            logger.warning("[tg-stealer] stealer_parser недоступен")
+                                        else:
+                                            result = _parse_stealer_log(
+                                                Path(tmp_path), name, [domain],
+                                                core_api_url, internal_secret,
+                                            )
+                                            matched += result.get("matched", 0)
+                                            sent    += result.get("sent", 0)
+                                            errors  += result.get("errors", 0)
                                 except Exception as exc:
                                     logger.error("[tg-stealer] file download %s: %s", name, exc)
+                                finally:
+                                    # 5b: Удаляем временный файл
+                                    if tmp_path is not None:
+                                        try:
+                                            os.unlink(tmp_path)
+                                        except OSError:
+                                            pass
 
                 except Exception as exc:
                     logger.warning("[tg-stealer] @%s: %s", channel, exc)

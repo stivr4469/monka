@@ -409,7 +409,7 @@ async def download_technical_report(
     org_name = org.name if org else "Unknown"
 
     # MEDIUM-9: CPU-тяжёлая reportlab-генерация в executor чтобы не блокировать event loop
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     pdf_bytes = await loop.run_in_executor(
         None,
         partial(generate_technical_report, org_name=org_name, domain=asset.domain, risk_score=risk_score, events=events),
@@ -464,7 +464,7 @@ async def download_executive_report(
     org = org_result.scalar_one_or_none()
     org_name = org.name if org else "Unknown"
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     pdf_bytes = await loop.run_in_executor(
         None,
         partial(generate_executive_report, org_name=org_name, domain=asset.domain, risk_score=risk_score, events=events),

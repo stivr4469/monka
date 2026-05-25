@@ -152,8 +152,15 @@ def install_gitleaks() -> str | None:
                 return None
 
             member = members[0]
-            member.name = "gitleaks"  # нормализуем имя
-            tar.extract(member, path=Path("/tmp"), set_attrs=False)
+            # Защита от TarSlip: убираем все компоненты пути, оставляем только имя файла
+            member.name = Path(member.name).name or "gitleaks"
+            if member.name != "gitleaks":
+                member.name = "gitleaks"  # нормализуем имя бинарника
+            try:
+                tar.extract(member, path=Path("/tmp"), set_attrs=False, filter="data")
+            except TypeError:
+                # Python < 3.12 не поддерживает filter=
+                tar.extract(member, path=Path("/tmp"), set_attrs=False)
     except Exception as exc:
         logger.error("Ошибка распаковки gitleaks: %s", exc)
         return None

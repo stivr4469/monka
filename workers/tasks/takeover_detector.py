@@ -121,7 +121,7 @@ def _get_cname(subdomain: str) -> str | None:
     или None если CNAME-записи нет или домен не существует.
     """
     try:
-        answers = dns.resolver.resolve(subdomain, "CNAME")
+        answers = dns.resolver.resolve(subdomain, "CNAME", lifetime=5.0)
         # Берём первый CNAME target, убираем trailing dot
         target = str(answers[0].target).rstrip(".")
         return target.lower()
@@ -208,10 +208,12 @@ def _check_takeover(subdomain: str, cname: str) -> dict | None:
 
     except httpx.TimeoutException:
         logger.debug("[takeover] Таймаут HTTP для %s", subdomain)
+    except httpx.HTTPStatusError as exc:
+        logger.warning("[takeover] HTTP статус ошибка для %s: %s", subdomain, exc)
     except httpx.RequestError as exc:
         logger.debug("[takeover] Сетевая ошибка для %s: %s", subdomain, exc)
     except Exception as exc:
-        logger.debug("[takeover] Непредвиденная ошибка для %s: %s", subdomain, exc)
+        logger.error("[takeover] Непредвиденная ошибка для %s: %s", subdomain, exc)
 
     return None
 
@@ -262,7 +264,7 @@ def scan_takeover(
         # Шаг 3: создаём событие
         vulnerable_count += 1
         events.append({
-            "event_type": "vulnerability",
+            "event_type": "subdomain_takeover",
             "severity": result["severity"],
             "source_type": "scanner",
             "source_name": "takeover_detector",

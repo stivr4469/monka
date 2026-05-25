@@ -1,4 +1,5 @@
 import asyncio
+import uuid as _uuid
 import logging
 from typing import Coroutine, Any
 
@@ -35,7 +36,7 @@ def _log_task_exc(task: asyncio.Task) -> None:
 def _is_cred_event(source_type: str | None, event_type: str | None) -> bool:
     """DRY-хелпер: определяет является ли событие credential-leak (MEDIUM-8)."""
     return (
-        source_type in ("stealer", "stealer_log", "breach")
+        source_type in ("stealer_log", "breach_checker")
         or event_type in ("credential_leak", "active_session_leak", "stealer_log")
     )
 
@@ -149,7 +150,6 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
             "dedup_hash":    event.dedup_hash,
             "payload":       event.payload or {},
         }
-        import uuid as _uuid
         _create_bg_task(index_leaked_credential(str(_uuid.uuid4()), _os_data))
         logger.debug("Credential без актива → OpenSearch only: %s", event.target_domain)
         return {"status": "accepted_opensearch_only", "event_id": None}
@@ -335,7 +335,6 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
         new_events.append(db_event)
 
     # Отправляем сырые credential-логи в OpenSearch (без PostgreSQL)
-    import uuid as _uuid
     for _os_data in opensearch_only:
         _create_bg_task(index_leaked_credential(str(_uuid.uuid4()), _os_data))
 

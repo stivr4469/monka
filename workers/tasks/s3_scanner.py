@@ -199,8 +199,9 @@ def run_s3_scan(domain: str, core_api_url: str, internal_secret: str) -> dict[st
     events: list[dict[str, Any]] = []
     for result in found:
         severity = "critical" if result["accessible"] else "medium"
+        event_type = "open_s3_bucket" if result["accessible"] else "exposed_service"
         events.append({
-            "event_type": "exposed_service",
+            "event_type": event_type,
             "severity": severity,
             "source_type": "scanner",
             "source_name": "s3_scanner",

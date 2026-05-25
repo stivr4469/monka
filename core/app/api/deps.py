@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -123,5 +124,5 @@ def verify_internal_secret(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> None:
     """Проверяет shared secret воркеров."""
-    if credentials.credentials != settings.INTERNAL_API_SECRET:
+    if not hmac.compare_digest(credentials.credentials, settings.INTERNAL_API_SECRET):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Неверный внутренний ключ")

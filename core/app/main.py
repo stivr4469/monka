@@ -2,20 +2,24 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings, settings, validate_secrets
 from app.core.rate_limit import limiter
 from app.core.security import hash_password
-from app.db import AsyncSessionLocal, engine
+from app.db import AsyncSessionLocal, get_db, engine
 from app.middleware.logging_middleware import LoggingMiddleware
+from app.workers_client import get_executor
 from app.models.api_key import ApiKey  # noqa: F401 — регистрирует таблицу в Base.metadata
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.base import Base
@@ -80,12 +84,15 @@ async def lifespan(app: FastAPI):
     # Graceful shutdown — закрываем Neo4j-соединение
     await close_driver()
 
+    # Graceful shutdown — дожидаемся завершения потоков в пуле
+    get_executor().shutdown(wait=True, cancel_futures=False)
+
 
 app = FastAPI(
     title="EASM Platform — Core API",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if get_settings().DEV_MODE else None,
+    redoc_url="/redoc" if get_settings().DEV_MODE else None,
     lifespan=lifespan,
 )
 
@@ -95,10 +102,16 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Middleware добавляются в обратном порядке (LIFO) — LoggingMiddleware
 # должна быть последней добавленной чтобы обернуть все запросы первой
+# Безопасность CORS: wildcard origin несовместим с allow_credentials=True
+_allowed_origins = settings.ALLOWED_ORIGINS
+assert "*" not in _allowed_origins, (
+    "CORS: нельзя использовать origin '*' вместе с allow_credentials=True — "
+    "уберите '*' из ALLOWED_ORIGINS"
+)
 app.add_middleware(
     CORSMiddleware,
     # Читаем из настроек — не хардкодим origins
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
@@ -111,8 +124,16 @@ app.include_router(api_router)
 
 
 @app.get("/health", tags=["health"])
-async def health() -> dict:
-    return {"status": "ok"}
+async def health(db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
+    """Проверяет доступность сервиса и соединение с БД."""
+    try:
+        await db.execute(text("SELECT 1"))
+        return {"status": "ok", "db": "ok"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "db": "error", "detail": str(e)},
+        )
 
 
 # Статический дашборд — монтируем последним чтобы не перехватывать API маршруты
