@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -46,6 +47,23 @@ GITLEAKS_ASSET_PATTERN = "linux_x64"
 
 # Временная директория для клонирования репозиториев
 CLONE_BASE = Path("/tmp/gitleaks_scan")
+
+# FP-фильтр для репозиториев — те же паттерны что в github_search.py
+_FP_REPO_RE = re.compile(
+    r"(?i)"
+    r"tranco|domain.?list|rank.?list|tld.?list|whois.?data"
+    r"|crawl.?data|pii.?xel|piidb|privadb|randomwebsite"
+    r"|web.?crawl|site.?mirror|domain.?scan|nextlist"
+    r"|reviewnav.?handler|alexa.?top|majestic.?million"
+    r"|tracking.?pixel|tracking.?pixel|pixel.?track"
+    r"|top[\-_]?\d+k?|tranco|alexa|majestic|umbrella"
+)
+
+
+def _is_fp_repo(repo_url: str) -> bool:
+    """Возвращает True если репозиторий — явный false positive (domain-list, research)."""
+    repo_name = repo_url.rstrip("/").split("/")[-1]
+    return bool(_FP_REPO_RE.search(repo_name) or _FP_REPO_RE.search(repo_url))
 
 # Rate-limit GitHub: не более 10 запросов поиска в минуту
 GITHUB_SEARCH_URL = "https://api.github.com/search/code"
@@ -525,8 +543,10 @@ def _collect_repos_from_search(domain: str, github_token: str) -> set[str]:
             items = resp.json().get("items", [])
             for item in items:
                 repo_html_url = item.get("repository", {}).get("html_url", "")
-                if repo_html_url:
+                if repo_html_url and not _is_fp_repo(repo_html_url):
                     repo_urls.add(repo_html_url)
+                elif repo_html_url:
+                    logger.debug("[gitleaks] FP репозиторий пропущен: %s", repo_html_url)
 
         except Exception as exc:
             logger.warning("Ошибка поиска репозиториев для '%s': %s", query, exc)

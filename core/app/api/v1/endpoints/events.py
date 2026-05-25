@@ -92,6 +92,7 @@ async def list_events(
     domain: str | None = Query(default=None, description="Фильтр по домену"),
     severity: str | None = Query(default=None, description="Фильтр по severity"),
     event_type: str | None = Query(default=None, description="Фильтр по типу события"),
+    asset_id: str | None = Query(default=None, description="Фильтр по asset_id"),
     limit: int = Query(default=50, ge=1, le=500, description="Размер страницы"),
     before: str | None = Query(
         default=None,
@@ -132,6 +133,8 @@ async def list_events(
         q = q.where(Event.severity == severity)
     if event_type:
         q = q.where(Event.event_type == event_type)
+    if asset_id:
+        q = q.where(Event.asset_id == asset_id)
 
     # Сортируем по убыванию времени, берём limit+1 для определения наличия следующей страницы
     q = q.order_by(Event.detected_at.desc()).limit(limit + 1)

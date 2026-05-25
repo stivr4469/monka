@@ -202,8 +202,9 @@ def detect_phishing_domains(
                 "source_name": "phishing_detector",
                 "target_domain": domain,
                 "payload": {
-                    "typosquat": variant_domain,
+                    "domain": variant_domain,
                     "original": domain,
+                    "type": technique,
                     "technique": technique,
                     "resolved_ip": resolved_ip,
                 },

@@ -68,10 +68,12 @@ def scan_target(self, target: str, root_domain: str) -> dict:
             "target_domain": root_domain,
             "payload": {
                 "template_id": record.get("template-id", ""),
+                "title": record.get("info", {}).get("name", ""),
                 "name": record.get("info", {}).get("name", ""),
                 "matched_url": record.get("matched-at", target),
                 "host": target,
                 "tags": record.get("info", {}).get("tags", []),
+                "severity": severity_raw,
             },
             "detected_at": datetime.now(timezone.utc).isoformat(),
         }

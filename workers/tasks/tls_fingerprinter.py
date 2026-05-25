@@ -55,6 +55,17 @@ _WAF_SIGNATURES: list[dict] = [
 ]
 
 
+def _tls_grade(version: str | None, cert_expiring_soon: bool) -> str:
+    """A/B/C/F на основе версии TLS и срока сертификата."""
+    if cert_expiring_soon:
+        return "C"
+    if version == "TLSv1.3":
+        return "A"
+    if version == "TLSv1.2":
+        return "B"
+    return "F"
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # TLS handshake через стандартный ssl-модуль
 # ──────────────────────────────────────────────────────────────────────────────
@@ -274,11 +285,14 @@ def run_tls_scan(
         "source_name": "tls_fingerprinter",
         "target_domain": domain,
         "payload": {
+            "protocol": tls_info.get("version"),
             "tls_version": tls_info.get("version"),
+            "grade": _tls_grade(tls_info.get("version"), cert_expiring_soon),
             "cipher": tls_info.get("cipher_name"),
             "cipher_bits": tls_info.get("cipher_bits"),
             "waf_detected": waf_list,
             "ja4s": ja4s_hash,
+            "cert_expiry": cert_not_after,
             "cert_expires": cert_not_after,
             "cert_cn": tls_info.get("cert_subject", {}).get("commonName"),
             "cert_issuer": tls_info.get("cert_issuer", {}).get("organizationName"),
