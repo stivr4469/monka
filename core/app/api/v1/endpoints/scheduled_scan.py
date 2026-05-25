@@ -201,6 +201,12 @@ def _run_full_scan_background(domain: str, port: int) -> None:
         scan_takeover(domain=domain, subdomains=[], core_api_url=core_api_url, internal_secret=sec)
     _run("takeover_detector", _takeover)
 
+    # 13. Telegram Monitor — упоминания домена в публичных leak-каналах
+    def _telegram():
+        from tasks.telegram_monitor import monitor_telegram_channels
+        monitor_telegram_channels(domain=domain, core_api_url=core_api_url, internal_secret=sec)
+    _run("telegram_monitor", _telegram)
+
     logger.info("[full_scan] ✅ Полное сканирование завершено для %s", domain)
 
 

@@ -54,7 +54,7 @@ def _get_driver() -> Any | None:
     password = os.environ.get("NEO4J_PASSWORD", "changeme")
 
     if not uri:
-        logger.debug("[neo4j] NEO4J_URI не задан — граф отключён")
+        logger.info("[neo4j] NEO4J_URI не задан — Attack Path Graph отключён (опционально)")
         return None
 
     try:
