@@ -42,6 +42,10 @@ class Event(Base):
     # 11.D: Кто пометил событие как устранённое
     resolved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # 13.H: Ссылка на тикет в Jira или ServiceNow
+    # Формат: "jira:SEC-123" или "servicenow:INC0001234"
+    ticket_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     asset_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True
     )

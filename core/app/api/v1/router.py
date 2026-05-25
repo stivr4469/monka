@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     billing,
     breach,
     censys_scan,
+    comparison,
     cookie_scan,
     ct_scan,
     dashboard,
@@ -38,6 +39,7 @@ from app.api.v1.endpoints import (
     takeover_scan,
     tech_scan,
     telegram_scan,
+    tickets,
     tls_scan,
     brand_scan,
     whois_scan,
@@ -140,4 +142,10 @@ api_router.include_router(stix_export.router, prefix="/export", tags=["export"])
 
 # Censys Enrichment — обогащение данных через Censys Search API (фаза 13.B)
 api_router.include_router(censys_scan.router)
+
+# Automated Remediation Playbooks — Jira/ServiceNow ticketing (фаза 13.H)
+api_router.include_router(tickets.router, prefix="/events", tags=["tickets"])
+
+# Multi-org Industry Comparison — MSSP portfolio comparison (Phase 13.I)
+api_router.include_router(comparison.router, prefix="/comparison", tags=["comparison"])
 
