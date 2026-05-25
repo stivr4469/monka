@@ -8,10 +8,12 @@ _workers_path = str(Path(__file__).parents[2] / "workers")
 if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core import rate_limit as _rate_limit_module
 from app.core.security import hash_password
 from app.db import get_db
 from app.main import app
@@ -25,6 +27,20 @@ TestSessionLocal = async_sessionmaker(test_engine, expire_on_commit=False, class
 
 # Пароль для всех тестовых пользователей
 TEST_PASSWORD = "testpassword"
+
+
+@pytest.fixture(autouse=True)
+def use_memory_rate_limiter():
+    """Сбрасывает счётчики rate limiter перед каждым тестом.
+
+    Декораторы @limiter.limit() захватывают оригинальный объект Limiter в замыкание,
+    поэтому замена limiter целиком не помогает — нужно сбрасывать .storage.reset()
+    именно того экземпляра, который был использован при декорировании роутов.
+    """
+    original_limiter = _rate_limit_module.limiter
+    app.state.limiter = original_limiter  # убеждаемся, что app.state указывает на тот же объект
+    original_limiter._storage.reset()    # обнуляем счётчики перед каждым тестом
+    yield
 
 
 @pytest_asyncio.fixture(autouse=True, scope="session")

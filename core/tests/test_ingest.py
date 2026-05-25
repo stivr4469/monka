@@ -55,7 +55,7 @@ async def test_ingest_rejects_wrong_secret(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_ingest_rejects_missing_auth(client: AsyncClient):
     resp = await client.post(INGEST_URL, json=_event_payload())
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio

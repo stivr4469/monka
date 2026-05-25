@@ -44,13 +44,13 @@ Password: pass456
 """
 
 def test_parse_block_format():
-    records = _detect_and_parse(BLOCK_SAMPLE)
+    records = _detect_and_parse(BLOCK_SAMPLE.splitlines())
     assert len(records) >= 2
     assert any(r["login"] == "user@example.com" for r in records)
     assert any(r["url"] == "https://bank.example.com" for r in records)
 
 def test_block_passwords_present():
-    records = _detect_and_parse(BLOCK_SAMPLE)
+    records = _detect_and_parse(BLOCK_SAMPLE.splitlines())
     # Убеждаемся что парсер читает пароли (маскировка — на уровне выше)
     assert any(r["password"] == "hunter2" for r in records)
 
@@ -63,7 +63,7 @@ test@other.org:qwerty
 """
 
 def test_parse_combo_format():
-    records = _detect_and_parse(COMBO_SAMPLE)
+    records = _detect_and_parse(COMBO_SAMPLE.splitlines())
     assert len(records) == 3
     assert records[0]["login"] == "user@example.com"
     assert records[0]["password"] == "password123"

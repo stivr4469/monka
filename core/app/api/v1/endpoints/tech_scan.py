@@ -8,6 +8,7 @@ POST /api/v1/scan/tech-profile — запускает Wappalyzer-like детек
 Rate limit: 5/minute (HTTP-запрос к целевому домену, не быстрее чем TLS-scan).
 Результаты: /api/v1/events?event_type=tech_profile&source_name=tech_profiler
 """
+import asyncio
 import re
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -82,13 +83,13 @@ class TechScanResponse(BaseModel):
 
 @router.post(
     "/tech-profile",
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=status.HTTP_200_OK,
+    response_model=TechScanResponse,
     summary="Technology Profiling (Wappalyzer-like)",
     description=(
         "Определяет технологии домена по HTTP-заголовкам, кукам и телу страницы. "
         "Покрывает 30+ технологий: CMS, фреймворки, веб-серверы, CDN, DevOps-инструменты. "
-        "Версии проверяются по базе End-of-Life — устаревшие версии получают severity=medium. "
-        "Результаты: GET /api/v1/events?event_type=tech_profile&source_name=tech_profiler"
+        "Версии проверяются по базе End-of-Life — устаревшие версии получают severity=medium."
     ),
 )
 @limiter.limit("5/minute")
@@ -97,10 +98,7 @@ async def trigger_tech_scan(
     body: TechScanRequest,
     current_user: CurrentUser,
 ) -> dict:
-    """
-    Запускает Technology Profiling в фоновом потоке (HTTP 202, не блокирует).
-    Результаты появляются асинхронно в /api/v1/events/.
-    """
+    """Запускает Technology Profiling в thread pool, возвращает результат синхронно."""
     if not _TECH_PROFILER_AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -110,15 +108,19 @@ async def trigger_tech_scan(
     domain = body.domain
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
-    get_executor().submit(
+    loop = asyncio.get_running_loop()
+    result: dict = await loop.run_in_executor(
+        get_executor(),
         run_tech_profiler,
         domain,
         core_api_url,
         settings.INTERNAL_API_SECRET,
-    )
+    ) or {}
 
     return {
-        "status": "processing",
-        "domain": domain,
-        "detail": f"Tech profiling запущен. Результаты: GET /api/v1/events?target_domain={domain}",
+        "status": "completed",
+        "domain": result.get("domain", domain),
+        "technologies": result.get("technologies", []),
+        "eol_detected": result.get("eol_detected", []),
+        "severity": result.get("severity", "info"),
     }

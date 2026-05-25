@@ -288,8 +288,14 @@ class TestSearchAhmia:
 # Тесты monitor_darknet (агрегатор)
 # ──────────────────────────────────────────────
 
+_NO_EXTRA_SOURCES = [
+    patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False),
+    patch("tasks.darknet_monitor._INTELX_AVAILABLE", False),
+]
+
+
 class TestMonitorDarknet:
-    """Тесты агрегирующей функции monitor_darknet."""
+    """Тесты агрегирующей функции monitor_darknet (3 clearnet-источника)."""
 
     def setup_method(self):
         """Сбрасываем кэш перед каждым тестом."""
@@ -304,60 +310,66 @@ class TestMonitorDarknet:
         with patch("tasks.darknet_monitor.check_ransomwatch", return_value=rw_result), \
              patch("tasks.darknet_monitor.search_ahmia", return_value=ah_result), \
              patch("tasks.darknet_monitor.search_darksearch", return_value=ds_result), \
-             patch("httpx.post", return_value=_ingest_ok()):
+             patch("tasks.darknet_monitor.bulk_ingest", return_value={"sent": 3, "errors": 0}), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             result = monitor_darknet("example.com", "http://localhost:8000", "secret")
 
         assert result["sources_checked"] == 3
-        assert result["found"] == 3       # по одной находке от каждого источника
+        assert result["found"] == 3
         assert result["sent"] == 3
         assert result["critical"] == 1    # только ransomwatch даёт critical
 
     def test_ransomwatch_hit_is_critical(self):
-        """Находки из ransomwatch отправляются с severity='critical'."""
+        """Находки из ransomwatch содержат severity='critical' в батче."""
         rw_result = [
             {"group": "ALPHV", "title": "example.com", "published": "2024-05-01", "snippet": "100GB stolen"},
         ]
 
-        captured_events: list[dict] = []
+        captured_batch: list[list] = []
 
-        def _capture_post(url, json, headers, timeout):
-            if "ingest" in url:
-                captured_events.append(json)
-            return _ingest_ok()
+        def _capture_bulk(events, *args, **kwargs):
+            captured_batch.append(events)
+            return {"sent": len(events), "errors": 0}
 
         with patch("tasks.darknet_monitor.check_ransomwatch", return_value=rw_result), \
              patch("tasks.darknet_monitor.search_ahmia", return_value=[]), \
              patch("tasks.darknet_monitor.search_darksearch", return_value=[]), \
-             patch("httpx.post", side_effect=_capture_post):
+             patch("tasks.darknet_monitor.bulk_ingest", side_effect=_capture_bulk), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             result = monitor_darknet("example.com", "http://localhost:8000", "secret")
 
         assert result["critical"] == 1
-        assert len(captured_events) == 1
-        assert captured_events[0]["severity"] == "critical"
-        assert captured_events[0]["payload"]["source"] == "ransomwatch"
-        assert captured_events[0]["payload"]["group"] == "ALPHV"
+        assert len(captured_batch) == 1
+        events = captured_batch[0]
+        assert len(events) == 1
+        assert events[0]["severity"] == "critical"
+        assert events[0]["payload"]["source"] == "ransomwatch"
+        assert events[0]["payload"]["group"] == "ALPHV"
 
     def test_ahmia_and_darksearch_hits_are_high(self):
-        """Находки из ahmia и darksearch отправляются с severity='high'."""
+        """Находки из ahmia и darksearch имеют severity='high' в батче."""
         ah_result = [{"title": "t", "url": "u", "onion": "o.onion", "snippet": "s"}]
         ds_result = [{"title": "t2", "url": "u2", "onion": "o2.onion", "snippet": "s2"}]
 
-        captured_events: list[dict] = []
+        captured_batch: list[list] = []
 
-        def _capture_post(url, json, headers, timeout):
-            if "ingest" in url:
-                captured_events.append(json)
-            return _ingest_ok()
+        def _capture_bulk(events, *args, **kwargs):
+            captured_batch.append(events)
+            return {"sent": len(events), "errors": 0}
 
         with patch("tasks.darknet_monitor.check_ransomwatch", return_value=[]), \
              patch("tasks.darknet_monitor.search_ahmia", return_value=ah_result), \
              patch("tasks.darknet_monitor.search_darksearch", return_value=ds_result), \
-             patch("httpx.post", side_effect=_capture_post):
+             patch("tasks.darknet_monitor.bulk_ingest", side_effect=_capture_bulk), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             result = monitor_darknet("example.com", "http://localhost:8000", "secret")
 
         assert result["critical"] == 0
         assert result["sent"] == 2
-        severities = {e["severity"] for e in captured_events}
+        severities = {e["severity"] for e in captured_batch[0]}
         assert severities == {"high"}
 
     def test_one_source_failure_does_not_stop_others(self):
@@ -367,44 +379,51 @@ class TestMonitorDarknet:
         with patch("tasks.darknet_monitor.check_ransomwatch", side_effect=Exception("rw down")), \
              patch("tasks.darknet_monitor.search_ahmia", return_value=ah_result), \
              patch("tasks.darknet_monitor.search_darksearch", return_value=[]), \
-             patch("httpx.post", return_value=_ingest_ok()):
+             patch("tasks.darknet_monitor.bulk_ingest", return_value={"sent": 1, "errors": 0}), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             result = monitor_darknet("example.com", "http://localhost:8000", "secret")
 
-        # ransomwatch упал, но ahmia нашла 1 результат
+        # ransomwatch упал (до increment), ahmia нашла 1 результат, darksearch — 0
         assert result["found"] == 1
         assert result["sent"] == 1
-        # sources_checked = 2 (ahmia + darksearch; ransomwatch упал до increment)
         assert result["sources_checked"] == 2
 
     def test_normalizes_domain(self):
         """monitor_darknet нормализует домен (strip + lower)."""
         with patch("tasks.darknet_monitor.check_ransomwatch", return_value=[]) as rw_mock, \
              patch("tasks.darknet_monitor.search_ahmia", return_value=[]), \
-             patch("tasks.darknet_monitor.search_darksearch", return_value=[]):
+             patch("tasks.darknet_monitor.search_darksearch", return_value=[]), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             monitor_darknet("  EXAMPLE.COM  ", "http://localhost:8000", "secret")
 
         called_domain = rw_mock.call_args[0][0]
         assert called_domain == "example.com"
 
     def test_ingest_error_does_not_count_as_sent(self):
-        """Ошибка отправки в Core API → sent не увеличивается."""
+        """Ошибка отправки в Core API → sent=0, found/critical считаются от найденного."""
         rw_result = [{"group": "LockBit", "title": "example.com", "published": "2024-01-01", "snippet": "x"}]
 
         with patch("tasks.darknet_monitor.check_ransomwatch", return_value=rw_result), \
              patch("tasks.darknet_monitor.search_ahmia", return_value=[]), \
              patch("tasks.darknet_monitor.search_darksearch", return_value=[]), \
-             patch("httpx.post", side_effect=Exception("ingest down")):
+             patch("tasks.darknet_monitor.bulk_ingest", return_value={"sent": 0, "errors": 1}), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             result = monitor_darknet("example.com", "http://localhost:8000", "secret")
 
         assert result["found"] == 1
         assert result["sent"] == 0
-        assert result["critical"] == 0  # critical засчитывается только при успешной отправке
+        assert result["critical"] == 1  # найдено ransomwatch (до отправки)
 
     def test_no_findings_returns_zeros(self):
         """Если ничего не найдено — все счётчики нулевые, sources_checked=3."""
         with patch("tasks.darknet_monitor.check_ransomwatch", return_value=[]), \
              patch("tasks.darknet_monitor.search_ahmia", return_value=[]), \
-             patch("tasks.darknet_monitor.search_darksearch", return_value=[]):
+             patch("tasks.darknet_monitor.search_darksearch", return_value=[]), \
+             patch("tasks.darknet_monitor._RANSOMWARE_SITES_AVAILABLE", False), \
+             patch("tasks.darknet_monitor._INTELX_AVAILABLE", False):
             result = monitor_darknet("clean-domain.com", "http://localhost:8000", "secret")
 
         assert result["sources_checked"] == 3
