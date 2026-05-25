@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     mssp,
     notifications,
     paste_scan,
+    score,
     phishing_scan,
     port_scan,
     reveal,
@@ -31,6 +32,7 @@ from app.api.v1.endpoints import (
     tech_scan,
     telegram_scan,
     tls_scan,
+    whois_scan,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -90,6 +92,9 @@ api_router.include_router(human_osint_scan.router)
 # Technology Profiling — Wappalyzer-like детектирование (задача 10.A)
 api_router.include_router(tech_scan.router)
 
+# WHOIS/Registrant Monitor — отслеживание изменений RDAP-данных (задача 13.C)
+api_router.include_router(whois_scan.router)
+
 # Reveal (расшифровка паролей) + Audit Log (задача 10.B)
 api_router.include_router(reveal.router)
 
@@ -98,4 +103,7 @@ api_router.include_router(api_keys.router)
 
 # Уведомления + SSE поток (задача 10.I)
 api_router.include_router(notifications.router)
+
+# Security Score Engine — многокатегорийный score (задача 11)
+api_router.include_router(score.router)
 

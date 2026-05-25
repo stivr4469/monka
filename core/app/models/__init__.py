@@ -10,3 +10,5 @@ from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.api_key import ApiKey  # noqa: F401
 # 10.I: Уведомления (Notification Hub)
 from app.models.notification import Notification  # noqa: F401
+# 11.B: Score Snapshots — история Security Score Engine
+from app.models.score_snapshot import ScoreSnapshot  # noqa: F401

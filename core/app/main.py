@@ -24,6 +24,7 @@ from app.models.api_key import ApiKey  # noqa: F401 — регистрирует
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.base import Base
 from app.models.notification import Notification  # noqa: F401
+from app.models.score_snapshot import ScoreSnapshot  # noqa: F401 — регистрирует таблицу в Base.metadata
 from app.models.organization import Organization
 from app.models.user import User
 from app.services.graph_client import close_driver, ensure_constraints

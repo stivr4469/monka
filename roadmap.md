@@ -617,3 +617,228 @@ Stripe-биллинг и Celery Beat автоматизация полного �
 - [ ] Рефакторинг слабых мест
 - [ ] Финальная проверка production-readiness
 
+---
+
+## Фаза 11: Security Score Engine + Executive Dashboard
+
+**Цель:** Главная продаваемая фича B2B — единый рейтинг безопасности 0–100 по 6 категориям,
+как у SecurityScorecard, но дешевле в 5–10× и с реальными данными из stealer/dark web слоёв.
+**Источник:** BRD_SURFACE_PLATFORM.md (май 2026).
+
+---
+
+### 11.A Security Score Engine — ядро расчёта
+
+- [ ] **11.A.1** Создать `core/app/services/score_engine.py` — функция `calculate_score(org_id, db) -> ScoreResult`
+- [ ] **11.A.2** Реализовать 6 категорий с весами:
+  ```python
+  SCORE_CATEGORIES = {
+      "network_security":     0.20,  # открытые порты, CVE, версии сервисов
+      "dns_health":           0.10,  # SPF, DKIM, DMARC, CAA
+      "application_security": 0.15,  # tech stack EOL, TLS, заголовки
+      "credential_exposure":  0.25,  # stealer logs, breaches, GitHub secrets
+      "dark_web_presence":    0.20,  # ransomware, darknet, paste leaks
+      "brand_safety":         0.10,  # phishing domains, typosquatting
+  }
+  ```
+- [ ] **11.A.3** Мапп��нг EventType → категория: `subdomain_takeover/exposed_service/vuln` → network_security; `domain_hardening` �� dns_health; `tech_profile/tls_fingerprint` → application_security; `stealer_log/credential_leak/github_leak/email_breach` → credential_exposure; `darknet_mention/ransomware_mention/paste_mention/telegram_leak` → dark_web_presence; `phishing_domain` → brand_safety
+- [ ] **11.A.4** Формула ��трафов с time decay: `penalty = W(sev) × e^(-0.003 × Δt_days) × asset_importance`
+  - critical=25, high=10, medium=4, low=1, info=0
+- [ ] **11.A.5** Итоговый score: `S = max(0, 100 - Σ penalties_per_category_capped_at_weight×100)`
+- [ ] **11.A.6** Возвращать `ScoreResult`: `{total: int, categories: dict[str, int], grade: str, trend_7d: int}`
+- [ ] **11.A.7** Добавить `GET /api/v1/assets/{asset_id}/score` эндпоинт — возвращает ScoreResult
+- [ ] **11.A.8** Добавить `GET /api/v1/organizations/{org_id}/score` — агрегированны�� score по всем доменам
+- [ ] **11.A.9** Кэшировать score в Redis (TTL 5 мин) — пересчёт по cronjob каждые 10 мин
+
+### 11.B Score History — тренд по времени
+
+- [ ] **11.B.1** Создать модель `ScoreSnapshot`: org_id, asset_id (nullable), score, categories_json, calculated_at
+- [ ] **11.B.2** Миграция Alembic для score_snapshots
+- [ ] **11.B.3** Celery за��ача `save_score_snapshot` — запускается каждые 6 часов через Beat
+- [ ] **11.B.4** `GET /api/v1/assets/{asset_id}/score/history?days=30` — последн��е N снимков для график��
+
+### 11.C Executive Dashboard — UI
+
+- [ ] **11.C.1** Главная страница: большой анимированный gauge (переработать из 10.C) с итоговым score
+- [ ] **11.C.2** Шесть мини-gauge по категориям — grid 2×3, каждый с названием и score
+- [ ] **11.C.3** Линей��ый график тренда score за 30 дней (Chart.js или native SVG)
+- [ ] **11.C.4** "Top 5 Risks" — список critical/high ��обытий с иконкой категории и кратко�� рекомендацией
+- [ ] **11.C.5** Comparison badge: "Лучш��/Хуже среднего по отрасли" (пока хардкод industry_avg=62)
+- [ ] **11.C.6** Grade как буква: 90–100=A, 75–89=B, 60–74=C, 40–59=D, 0–39=F — крупно рядом с gauge
+
+### 11.D Remediation Hints — рекомендации по устранению
+
+- [ ] **11.D.1** Создать `core/app/data/remediation_hints.py` — dict `EventType → {"title": str, "steps": list[str], "effort": "low/medium/high"}`
+- [ ] **11.D.2** В `GET /api/v1/events/{id}` добавить поле `remediation` из hints dict
+- [ ] **11.D.3** В UI кар��очка события — раздел "Как устранить" с пронумерованными шагами
+- [ ] **11.D.4** Кнопка "Отметит�� устранё��ным" → `PATCH /api/v1/events/{id}` поле `resolved=true` → score пересчитывается
+
+### 11.E Senior Code Review Phase 11
+
+- [ ] Полный review score_engine.py и Dashboard компонентов
+- [ ] Провер��ть точность маппинга EventType → категория
+- [ ] Верификация формулы на тестовых данных
+
+---
+
+## Фаза 12: Brand Safety — мониторинг бренда в clearnet
+
+**Цель:** Обнаруживать злоупотребления брендом вне периметра компани�� — в соцсетях,
+App Store, на форумах. Уникальное конкурентное преимущество против Digital Shadows.
+**Источник:** BRD_SURFACE_PLATFORM.md (май 2026).
+
+---
+
+### 12.A Real-time Certificate Transparency — поток новых похожих доменов
+
+- [ ] **12.A.1** Создать `workers/tasks/ct_monitor.py` — подписка на `certstream.calidog.io` через WebSocket
+- [ ] **12.A.2** Для каждого новог�� сертификата — проверя��ь схожесть с мониторируемыми доменами через `Levenshtein distance ≤ 2` или `contains(brand_keyword)`
+- [ ] **12.A.3** Совпад��ние → `NormalizedEvent(event_type="phishing_domain", severity="high", source_name="ct_monitor", payload={"new_domain": "...", "similarity": 0.85, "registered_at": "..."})`
+- [ ] **12.A.4** Дедупликация: не слать повторно один и тот же домен в течение 7 дней
+- [ ] **12.A.5** Добавить `POST /api/v1/scan/ct-monitor` для ручног�� старта и `workers/celery_config.py` задача каждые 30 мин
+
+### 12.B Brand Mentions — мониторинг упоминаний в интернете
+
+- [ ] **12.B.1** Создать `workers/tasks/brand_monitor.py` — поиск ��о ключевым словам (company name, domain) через:
+  - Reddit API (`/search.json?q={brand}&sort=new&limit=25`)
+  - RSS-ленты Hacker News (`hn.algolia.com/api/v1/search?query={brand}`)
+- [ ] **12.B.2** Фильтрация: только посты с негативными ключевыми словами (hack, breach, leak, phish, scam, fake)
+- [ ] **12.B.3** `NormalizedEvent(event_type="forum_mention", severity="medium", source_name="brand_monitor", payload={"platform": "reddit", "url": "...", "title": "...", "sentiment": "negative"})`
+- [ ] **12.B.4** Добавить `POST /api/v1/scan/brand` эндпоинт
+
+### 12.C Supply Chain Monitoring — домены партнёров и вендоров
+
+- [ ] **12.C.1** Добавить в модель Asset поле `asset_type`: `primary | subsidiary | vendor | partner`
+- [ ] **12.C.2** В UI — возможность добавить актив с типом "vendor" (домен CRM/ERP/cloud провайдера)
+- [ ] **12.C.3** Для vendor-доменов запуска��ь облегчённый сканSet: только subdomain_takeover + hardening + breach_check (без port scan)
+- [ ] **12.C.4** На дашборде — отдельна�� секция "Supply Chain Risk" с vendor-акти��ами и их score
+
+### 12.D Mobile App Monitoring — App Store и Google Play
+
+- [ ] **12.D.1** Создать `workers/tasks/mobile_monitor.py` — поиск по названию ко��пании в:
+  - iTunes Search API: `GET https://itunes.apple.com/search?term={brand}&entity=software`
+  - Google Play unofficial: `GET https://play.google.com/store/search?q={brand}&c=apps`
+- [ ] **12.D.2** Список легитимных app ID хранить в Asset.payload (настраивается вручную)
+- [ ] **12.D.3** Найденное незарегистрированное приложение с похожим именем/описанием → `NormalizedEvent(event_type="phishing_domain", severity="high", source_name="mobile_monitor", payload={"platform": "ios/android", "app_name": "...", "developer": "...", "url": "..."})`
+- [ ] **12.D.4** Добавить `POST /api/v1/scan/mobile` эндпоинт
+
+### 12.E Telegram Brand Mentions — расширение существующего воркера
+
+- [ ] **12.E.1** В `workers/tasks/telegram_monitor.py` — добавить режим `brand_mode=True`: искать не только credentials с доменом, но и упоминания brand keywords в текстах постов
+- [ ] **12.E.2** Brand keywords конфигурируются в `Asset.brand_keywords` (JSON array: `["CompanyName", "CEO name", "product name"]`)
+- [ ] **12.E.3** Совпадение brand keyword (не credentials) → `severity="low"` вместо `"high"`
+
+### 12.F Senior Code Review Phase 12
+
+- [ ] Review ct_monitor.py на race conditions при обработке потока
+- [ ] Проверить на ложные срабатывания (false positives) в brand_monitor
+- [ ] Supply chain �� проверить изоляцию между org данными
+
+---
+
+## Фаза 13: Enterprise — Censys, masscan, STIX/TAXII, AI Narratives
+
+**Цель:** Закрыть enterprise-требования крупных клиентов — скорость сканирования,
+интеграция с корпоративными SIEM, benchmarking против отрасли, автоматические playbooks.
+**Источник:** BRD_SURFACE_PLATFORM.md (май 2026).
+
+---
+
+### 13.A masscan — высокоскоростное сканирование IP-диапазонов
+
+- [ ] **13.A.1** Установить masscan в `workers/Dockerfile`: `RUN apt-get install -y masscan`
+- [ ] **13.A.2** Создать `workers/tasks/masscan_scanner.py` — `masscan {cidr} -p1-65535 --rate=1000 -oJ -` через subprocess (shell=False)
+- [ ] **13.A.3** Парсить JSON вывод masscan → список `{ip, port, proto, timestamp}`
+- [ ] **13.A.4** Для каждого открытого порта — запускать `nmap -sV -p{port} {ip}` для service fingerprint
+- [ ] **13.A.5** CIDR вычислять автоматически из IP-адресов Asset: ASN lookup → `whois -h whois.radb.net -- "-i origin AS{asn}"` → список prefix
+- [ ] **13.A.6** Добавить `POST /api/v1/scan/masscan` эндпоинт (только Enterprise план)
+- [ ] **13.A.7** Rate limit: 1 masscan задача на организацию одновременно
+
+### 13.B Censys Integration — исторические данные интернет-сканов
+
+- [ ] **13.B.1** Добавить `CENSYS_API_ID` и `CENSYS_API_SECRET` в `.env` и `config.py`
+- [ ] **13.B.2** Создать `workers/tasks/censys_enricher.py` — `POST https://search.censys.io/api/v2/hosts/search` с query `ip:{asset_ip}`
+- [ ] **13.B.3** Извлекат��: open ports, services, TLS certs, autonomous_system, last_seen
+- [ ] **13.B.4** Сравнивать с нашими данными: порт открыт в Censys, но не у нас → возможно фильтруе��ся файрволом → `NormalizedEvent(event_type="asset_drift", severity="medium")`
+- [ ] **13.B.5** Fallback: если нет CENSYS к��ючей — логировать предупреждение и пропускать шаг
+
+### 13.C WHOIS / Registrant Monitoring — смена владельца домена
+
+- [ ] **13.C.1** Создать `workers/tasks/whois_monitor.py` — `python-whois` или `GET https://rdap.org/domain/{domain}` для получения registrant, nameservers, expiry_date
+- [ ] **13.C.2** Хранить baseline WHOIS в `Asset.whois_snapshot` (JSON)
+- [ ] **13.C.3** При изменении registrant/NS/expiry → `NormalizedEvent(event_type="asset_drift", severity="high", payload={"field": "registrant", "old": "...", "new": "..."})`
+- [ ] **13.C.4** Срок и��течения домена < 30 дней → `severity="critical"` (угроза потери ��омена)
+- [ ] **13.C.5** Celery Beat: п��оверка каждые 24 часа
+- [ ] **13.C.6** Добавить `POST /api/v1/scan/whois` эндпоинт
+
+### 13.D BGP/ASN Monitoring — смена IP-диапазонов
+
+- [ ] **13.D.1** Создать `workers/tasks/bgp_monitor.py` — `GET https://api.bgpview.io/ip/{ip}` для получения ASN и prefix
+- [ ] **13.D.2** Хранить baseline `{asn, prefix}` в Asset.bgp_snapshot
+- [ ] **13.D.3** Смен�� ASN (IP сменил провайдера) → `NormalizedEvent(event_type="asset_drift", severity="medium", payload={"old_asn": "...", "new_asn": "..."})`
+- [ ] **13.D.4** Celery Beat: проверка каждые 6 часов
+
+### 13.E STIX/TAXII Export — интеграция с корпоративными SIEM
+
+- [ ] **13.E.1** Добавить `stix2` Python library в `core/requirements.txt`
+- [ ] **13.E.2** Создать `core/app/services/stix_exporter.py` — конвертация Event → STIX2.1 Indicator/Observable object
+- [ ] **13.E.3** Маппинг: `stealer_log` → `user-account` + `domain-name` Observable; `darknet_mention` → `threat-actor` Indicator; `phishing_domain` → `domain-name` + `url` Indicator
+- [ ] **13.E.4** `GET /api/v1/export/stix?asset_id=X&since=2026-01-01` — STIX2.1 Bundle JSON (только Enterprise)
+- [ ] **13.E.5** TAXII2 server: `GET /taxii/` discovery, `GET /taxii/collections/`, `GET /taxii/collections/{id}/objects/` — совместимость с�� Splunk ES, IBM QRadar, Microsoft Sentinel
+
+### 13.F Industry Benchmarking — сравнение с отраслью
+
+- [ ] **13.F.1** Добавить таблицу `industry_benchmarks`: sector (enum), metric, avg_score, p25, p75, updated_at
+- [ ] **13.F.2** Наполнить seed-данным�� из открытых отчётов (SecurityScorecard Annual Report, Verizon DBIR)
+- [ ] **13.F.3** В `GET /api/v1/organizations/{org_id}/score` добавить поля: `industry_avg`, `percentile`, `rank_label` ("Лучше 78% компаний в финтехе")
+- [ ] **13.F.4** На дашборде — горизонтальная полоса: "Ваш score vs. отрасль" с percentile badge
+- [ ] **13.F.5** `PATCH /api/v1/organizations/{org_id}` — поле `industry_sector` (fintech/healthcare/retail/ecom/saas/gov)
+
+### 13.G AI Risk Narrative — автоматический executive summary через LLM
+
+- [ ] **13.G.1** Добавить `anthropic` Python SDK в `core/requirements.txt`
+- [ ] **13.G.2** Создать `core/app/services/ai_narrative.py` — функция `generate_narrative(score_result, top_events) -> str`
+- [ ] **13.G.3** Промпт: score по категориям + топ-5 событий → 3 абзаца: текущее состояние, ключевые риски, рекомендации. Язык: plain English/Russian без жаргона (для CEO)
+- [ ] **13.G.4** `GET /api/v1/assets/{asset_id}/narrative` — генерирует и кэширует (Redis, TTL 24ч) AI summary
+- [ ] **13.G.5** В Executive PDF-отчёт (9.G) — добавить AI narrative как первую страницу "Security Summary"
+- [ ] **13.G.6** Использовать Claude API с prompt caching для снижения стоимости (промпт системный = кэшируется)
+
+### 13.H Automated Remediation Playbooks — тикеты в Jira/ServiceNow
+
+- [ ] **13.H.1** Добавить `JIRA_URL`, `JIRA_TOKEN`, `JIRA_PROJECT_KEY` в `.env`
+- [ ] **13.H.2** Создать `core/app/services/ticket_creator.py` — создание Jira issue из Event: summary, description, priority, labels
+- [ ] **13.H.3** `POST /api/v1/events/{id}/create-ticket` — создать тикет вручную (Enterprise)
+- [ ] **13.H.4** Alert Rule опция `auto_ticket=true` — автоматически создавать тикет при critical событии
+- [ ] **13.H.5** Хранить `jira_issue_key` в Event.metadata — ссылка в UI "Открыть в Jira"
+- [ ] **13.H.6** Аналогично для ServiceNow через REST API (опциональный провайдер)
+
+### 13.I Multi-org Industry Comparison UI
+
+- [ ] **13.I.1** На странице MSSP Dashboard — кнопка "Benchmark отрасли" открывает модал
+- [ ] **13.I.2** Box plot или violin chart: распределение score в отрасли + маркер текущего клиента
+- [ ] **13.I.3** Таблица топ-5 типов событий, которые чаще всего снижают score в отрасли
+
+### 13.J Senior Code Review Phase 13
+
+- [ ] Security review masscan запуска (privilege escalation риски через subprocess)
+- [ ] Проверить STIX export на корректност�� схемы 2.1
+- [ ] Верификация AI narrative на hallucination (не придумывает несуществующих уязвимостей)
+- [ ] Rate limit на masscan и Censys endpoints
+
+---
+
+## Текущий статус по фазам
+
+| Фаза | Статус | Описание |
+|---|---|---|
+| 1–4 | ✅ DONE | Фундамент, Core API, Asset Discovery, Stealer Logs, Alerts |
+| 5 | ✅ DONE | Darknet Intelligence (Tor, Ransomware Sites, IntelX) |
+| 6 | ✅ DONE | Production Hardening, Senior Code Review |
+| 7 | ✅ DONE | Bulk Ingest, OpenSearch Data Lake, Domain Hardening |
+| 8 | ✅ DONE | Risk Score, Phishing Detector, PDF Reports, S3 Scanner, Billing |
+| 9 | ✅ DONE | JA4, Subdomain Takeover, Cookie Validator, Human OSINT, Neo4j, MSSP |
+| 10 | ✅ DONE | Tech Profiler, Password Reveal, CSV Export, API Keys, Celery Beat |
+| **11** | 🔲 TODO | Security Score Engine, Executive Dashboard |
+| **12** | 🔲 TODO | Brand Safety (CT stream, Reddit, Mobile apps, Supply chain) |
+| **13** | 🔲 TODO | Enterprise (masscan, Censys, WHOIS, STIX, AI narrative, Jira) |
+
