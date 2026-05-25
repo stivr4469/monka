@@ -7,7 +7,9 @@
 """
 import csv
 import io
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -19,6 +21,20 @@ from app.core.crypto import decrypt_password
 from app.models.asset import Asset
 from app.models.event import Event
 from app.services.opensearch_client import search_events as os_search_events
+
+# Подключаем workers/ к sys.path для импорта remediation_hints
+_workers_path = str(Path(__file__).parents[5] / "workers")
+if _workers_path not in sys.path:
+    sys.path.insert(0, _workers_path)
+
+try:
+    from tasks.remediation_hints import get_hints as _get_hints
+    _HINTS_AVAILABLE = True
+except ImportError:
+    _HINTS_AVAILABLE = False
+
+    def _get_hints(event_type: str) -> list[str]:  # type: ignore[misc]
+        return []
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -32,6 +48,10 @@ class EventRead(BaseModel):
     target_domain: str
     payload: dict
     detected_at: datetime
+    resolved: bool = False
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    remediation_hints: list[str] = []
 
     model_config = {"from_attributes": True}
 
@@ -127,8 +147,13 @@ async def list_events(
     if has_next and items:
         next_before = items[-1].detected_at.isoformat()
 
+    def _to_event_read(e: Event) -> EventRead:
+        data = EventRead.model_validate(e)
+        data.remediation_hints = _get_hints(e.event_type)
+        return data
+
     return EventListResponse(
-        items=[EventRead.model_validate(e) for e in items],
+        items=[_to_event_read(e) for e in items],
         next_before=next_before,
     )
 
@@ -399,3 +424,82 @@ async def search_events(
     ]
 
     return {"source": "postgresql", "total": len(matched), "items": matched[:limit]}
+
+
+class ResolveRequest(BaseModel):
+    note: str | None = None
+
+
+@router.patch("/{event_id}/resolve", summary="Пометить событие как устранённое")
+async def resolve_event(
+    event_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+    body: ResolveRequest = ResolveRequest(),
+) -> dict:
+    """
+    11.D: Помечает событие как устранённое.
+    Устанавливает resolved=True, resolved_at=now(), resolved_by=email пользователя.
+    Доступ ограничен событиями СВОЕЙ организации.
+    """
+    if current_user.organization_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет организации")
+
+    q = (
+        select(Event)
+        .join(Asset, Event.asset_id == Asset.id)
+        .where(
+            Event.id == event_id,
+            Asset.organization_id == current_user.organization_id,
+        )
+    )
+    result = await db.execute(q)
+    event = result.scalar_one_or_none()
+
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+
+    event.resolved = True
+    event.resolved_at = datetime.now(timezone.utc)
+    event.resolved_by = current_user.email
+
+    await db.commit()
+    await db.refresh(event)
+
+    read = EventRead.model_validate(event)
+    read.remediation_hints = _get_hints(event.event_type)
+    return read.model_dump()
+
+
+@router.get("/{event_id}/hints", summary="Рекомендации по устранению для события")
+async def event_hints(
+    event_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> dict:
+    """
+    11.D: Возвращает список рекомендаций по устранению для данного события.
+    Доступ ограничен событиями СВОЕЙ организации.
+    """
+    if current_user.organization_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет организации")
+
+    q = (
+        select(Event)
+        .join(Asset, Event.asset_id == Asset.id)
+        .where(
+            Event.id == event_id,
+            Asset.organization_id == current_user.organization_id,
+        )
+    )
+    result = await db.execute(q)
+    event = result.scalar_one_or_none()
+
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+
+    return {
+        "event_id": event_id,
+        "event_type": event.event_type,
+        "hints": _get_hints(event.event_type),
+    }

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, new_uuid
@@ -31,10 +31,16 @@ class Event(Base):
     # 9.H.3: Условие для снятия штрафа Risk Score (что нужно сделать)
     condition: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 9.H.3: Когда условие выполнено (NULL = не устранено)
+    # 11.D: Флаг устранения уязвимости
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
+    # 9.H.3 / 11.D: Когда условие выполнено (NULL = не устранено)
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # 11.D: Кто пометил событие как устранённое
+    resolved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     asset_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True

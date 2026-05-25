@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     human_osint_scan,
     ingest,
     internal_alerts,
+    mobile_scan,
     mssp,
     notifications,
     paste_scan,
@@ -40,6 +41,7 @@ from app.api.v1.endpoints import (
     tls_scan,
     brand_scan,
     whois_scan,
+    bgp_scan,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -75,6 +77,9 @@ api_router.include_router(ct_scan.router)
 # Brand Monitor — Reddit + HN + Telegram (фаза 12.B / 12.E)
 api_router.include_router(brand_scan.router)
 
+# Mobile App Monitor — App Store + Google Play (фаза 12.D)
+api_router.include_router(mobile_scan.router)
+
 # Стилер-логи: загрузка файлов + автоматические источники
 api_router.include_router(stealer.router)
 api_router.include_router(stealer_sources.router)
@@ -108,6 +113,9 @@ api_router.include_router(tech_scan.router)
 
 # WHOIS/Registrant Monitor — отслеживание изменений RDAP-данных (задача 13.C)
 api_router.include_router(whois_scan.router)
+
+# BGP/ASN Monitor — детекция смены провайдера и IP-диапазонов (задача 13.D)
+api_router.include_router(bgp_scan.router)
 
 # Reveal (расшифровка паролей) + Audit Log (задача 10.B)
 api_router.include_router(reveal.router)
