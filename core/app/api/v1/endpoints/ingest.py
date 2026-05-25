@@ -118,6 +118,9 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
     """
     Принимает нормализованные события от Celery-воркеров.
     Дедуплицирует по dedup_hash — повторное событие возвращает 202 без записи.
+
+    Data Lake: credential-события без привязанного актива пишутся только в
+    OpenSearch (easm-leaked-credentials) — PostgreSQL не раздувается сырыми логами стилеров.
     """
     # Дедупликация
     if event.dedup_hash:
@@ -133,6 +136,23 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         select(Asset).where(Asset.domain == event.target_domain, Asset.is_active == True)  # noqa: E712
     )
     asset = asset_result.scalar_one_or_none()
+
+    # Data Lake: сырые credential-логи без клиентского актива → только OpenSearch
+    if asset is None and _is_cred_event(event.source_type, event.event_type):
+        _os_data = {
+            "event_type":    event.event_type,
+            "severity":      event.severity,
+            "source_type":   event.source_type,
+            "source_name":   event.source_name,
+            "target_domain": event.target_domain,
+            "detected_at":   event.detected_at.isoformat() if event.detected_at else None,
+            "dedup_hash":    event.dedup_hash,
+            "payload":       event.payload or {},
+        }
+        import uuid as _uuid
+        _create_bg_task(index_leaked_credential(str(_uuid.uuid4()), _os_data))
+        logger.debug("Credential без актива → OpenSearch only: %s", event.target_domain)
+        return {"status": "accepted_opensearch_only", "event_id": None}
 
     # Загружаем организацию для webhook (только если нужно — при critical)
     org: Organization | None = None
@@ -273,6 +293,8 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
 
     accepted = duplicates = errors = 0
     new_events: list[Event] = []
+    # Data Lake: credential-события без актива → только OpenSearch, не в PG
+    opensearch_only: list[dict] = []
 
     for event in body.events:
         if event.dedup_hash and event.dedup_hash in existing_hashes:
@@ -280,6 +302,22 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             continue
 
         asset = domain_to_asset.get(event.target_domain or "")
+
+        # Data Lake: сырой credential-лог без клиентского актива → OpenSearch only
+        if asset is None and _is_cred_event(event.source_type, event.event_type):
+            opensearch_only.append({
+                "event_type":    event.event_type,
+                "severity":      event.severity,
+                "source_type":   event.source_type,
+                "source_name":   event.source_name,
+                "target_domain": event.target_domain,
+                "detected_at":   event.detected_at.isoformat() if event.detected_at else None,
+                "dedup_hash":    event.dedup_hash,
+                "payload":       event.payload or {},
+            })
+            duplicates += 1  # засчитываем как "не в PG" — не в accepted, не в errors
+            continue
+
         # 9.H.3: Авто-генерируем condition если явно не передан
         condition = event.condition or _auto_condition(event.event_type, event.payload)
         db_event = Event(
@@ -296,6 +334,11 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
         )
         new_events.append(db_event)
 
+    # Отправляем сырые credential-логи в OpenSearch (без PostgreSQL)
+    import uuid as _uuid
+    for _os_data in opensearch_only:
+        _create_bg_task(index_leaked_credential(str(_uuid.uuid4()), _os_data))
+
     if new_events:
         try:
             db.add_all(new_events)
@@ -305,8 +348,20 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             accepted = sum(1 for ev in new_events if ev.id is not None)
         except Exception as exc:
             await db.rollback()
-            logger.error("Ошибка bulk insert: %s", exc)
-            errors = len(new_events)
+            logger.warning("Батч упал (%s), переходим на поштучную вставку через savepoint", exc)
+            # Savepoint-фолбэк: спасаем валидные записи по одной
+            for ev in new_events:
+                try:
+                    async with db.begin_nested():  # SAVEPOINT
+                        db.add(ev)
+                    await db.commit()
+                    accepted += 1
+                except Exception as single_exc:
+                    logger.error(
+                        "Битое событие пропущено: domain=%s type=%s err=%s",
+                        ev.target_domain, ev.event_type, single_exc,
+                    )
+                    errors += 1
 
     # 7.C.1 / 9.I: Асинхронная индексация в OpenSearch.
     # Credential-события → easm-leaked-credentials, остальные → easm-events.

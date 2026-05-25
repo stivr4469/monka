@@ -12,9 +12,13 @@ User-Agent ротируется через fake_useragent.
   - shell=False везде, никаких subprocess
   - Никаких raw паролей или PII — только имена жертв/домены (публичные данные группировок)
 """
+import glob
 import logging
+import os
 import re
+import shutil
 import socket
+import subprocess
 from typing import Any
 
 import httpx
@@ -25,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 _TOR_TIMEOUT = 45.0
 _SNIPPET_MAX_LEN = 500
+# Жёсткий таймаут Playwright — если процесс завис, убиваем его принудительно
+_PLAYWRIGHT_HARD_TIMEOUT = 90
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WWW_RE = re.compile(r"^(https?://)?(www\.)?", re.IGNORECASE)
 
@@ -114,10 +120,21 @@ def _rotate_tor_circuit() -> None:
         logger.debug("[ransomware_sites] NEWNYM недоступен: %s", exc)
 
 
+def _kill_stray_chromium() -> None:
+    """Убивает оставшиеся процессы chromium после Playwright-сессии."""
+    try:
+        subprocess.run(["pkill", "-9", "-f", "chromium"], check=False, timeout=5)
+    except Exception:
+        pass
+
+
 def _fetch_with_playwright(onion_url: str, group_name: str) -> str:
     """
     Загружает страницу через Playwright + Chromium + Tor SOCKS5h.
-    Ждёт JS-рендеринга, возвращает итоговый HTML.
+
+    Если задан BROWSERLESS_URL — подключается к удалённому CDP-эндпоинту
+    вместо локального Chromium (нет риска зомби-процессов).
+    Браузер и контекст закрываются в finally-блоке при любом исходе.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -126,17 +143,24 @@ def _fetch_with_playwright(onion_url: str, group_name: str) -> str:
         logger.error("[ransomware_sites] Playwright не установлен: %s", exc)
         return ""
 
+    browserless_url = os.environ.get("BROWSERLESS_URL", "")
     ua = _get_random_ua()
     html = ""
     stealth = Stealth()
+    browser = None
+    ctx = None
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                proxy={"server": "socks5://127.0.0.1:9050"},
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
+            if browserless_url:
+                # Удалённый Browserless/Chrome CDP — не нужен локальный Chromium
+                browser = p.chromium.connect_over_cdp(browserless_url)
+            else:
+                browser = p.chromium.launch(
+                    headless=True,
+                    proxy={"server": "socks5://127.0.0.1:9050"},
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
             ctx = browser.new_context(
                 user_agent=ua,
                 locale="en-US",
@@ -147,7 +171,11 @@ def _fetch_with_playwright(onion_url: str, group_name: str) -> str:
             stealth.apply_stealth_sync(page)
 
             logger.info("[ransomware_sites][%s][playwright] GET %s", group_name, onion_url)
-            page.goto(onion_url, timeout=int(_TOR_TIMEOUT * 1000), wait_until="networkidle")
+            page.goto(
+                onion_url,
+                timeout=int(_TOR_TIMEOUT * 1000),
+                wait_until="networkidle",
+            )
 
             # Ждём появления контента жертв (если не загрузился — берём что есть)
             try:
@@ -157,21 +185,30 @@ def _fetch_with_playwright(onion_url: str, group_name: str) -> str:
                     timeout=15000,
                 )
             except Exception:
-                pass  # возьмём page.content() как есть
+                pass
 
             html = page.content()
-            ctx.close()
-            browser.close()
-
-        # Удаляем артефакты Playwright из /tmp
-        import glob, shutil
-        for path in glob.glob("/tmp/playwright-artifacts-*"):
-            shutil.rmtree(path, ignore_errors=True)
 
     except Exception as exc:
-        logger.warning(
-            "[ransomware_sites][%s][playwright] Ошибка: %s", group_name, exc
-        )
+        logger.warning("[ransomware_sites][%s][playwright] Ошибка: %s", group_name, exc)
+    finally:
+        # Гарантированно закрываем контекст и браузер при любом исходе
+        if ctx is not None:
+            try:
+                ctx.close()
+            except Exception:
+                pass
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        # Добиваем стрэй-процессы только для локального режима
+        if not browserless_url:
+            _kill_stray_chromium()
+        # Чистим временные артефакты Playwright
+        for _path in glob.glob("/tmp/playwright-artifacts-*"):
+            shutil.rmtree(_path, ignore_errors=True)
 
     return html
 

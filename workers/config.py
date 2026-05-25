@@ -17,5 +17,13 @@ class WorkerSettings(BaseSettings):
     NUCLEI_BIN: str = "/usr/local/bin/nuclei"
     GITLEAKS_BIN: str = "/usr/local/bin/gitleaks"
 
+    # Прокси для cookie_validator (comma-separated, опционально)
+    # Формат: http://user:pass@host:port,http://user:pass@host2:port
+    COOKIE_PROXY_LIST: str = ""
+
+    # Browserless CDP-эндпоинт для Playwright (ws://browserless:3000?token=...)
+    # Если задан — локальный Chromium не запускается, нет риска зомби-процессов
+    BROWSERLESS_URL: str = ""
+
 
 settings = WorkerSettings()

