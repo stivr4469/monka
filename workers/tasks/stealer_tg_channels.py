@@ -51,6 +51,11 @@ STEALER_TG_CHANNELS: list[str] = [
     "MetaStealer_logs",
     "StealC_logs",
     "leakednation",
+    # Добавлены по результатам проверки доступности (май 2026)
+    "logs_cloud",
+    "cloudlogs_free",
+    "free_logs_daily",
+    "InfoStealer_News",
 ]
 
 _TELETHON_AVAILABLE = False
