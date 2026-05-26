@@ -27,7 +27,7 @@ _workers_path = str(Path(__file__).parents[5] / "workers")
 if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 
-from tasks.stix_export import events_to_stix_bundle, bundle_to_json  # noqa: E402
+from workers.tasks.stix_export import events_to_stix_bundle, bundle_to_json  # noqa: E402
 
 router = APIRouter(tags=["export"])
 

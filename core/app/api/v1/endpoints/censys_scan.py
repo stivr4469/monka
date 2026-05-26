@@ -26,7 +26,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.censys_enricher import enrich_domain_with_censys
+    from workers.tasks.censys_enricher import enrich_domain_with_censys
     _CENSYS_WORKER_AVAILABLE = True
 except ImportError:
     _CENSYS_WORKER_AVAILABLE = False

@@ -15,7 +15,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.github_search import search_github
+    from workers.tasks.github_search import search_github
     _GITHUB_AVAILABLE = True
 except ImportError:
     _GITHUB_AVAILABLE = False

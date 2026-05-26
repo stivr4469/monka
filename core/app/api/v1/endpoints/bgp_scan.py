@@ -28,7 +28,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.bgp_monitor import check_bgp
+    from workers.tasks.bgp_monitor import check_bgp
     _BGP_AVAILABLE = True
 except ImportError:
     _BGP_AVAILABLE = False

@@ -21,7 +21,7 @@ if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 
 try:
-    from tasks.ticketing import (  # type: ignore[import]
+    from workers.tasks.ticketing import (  # type: ignore[import]
         _JIRA_AVAILABLE,
         _SNOW_AVAILABLE,
         create_ticket_for_event,
@@ -160,14 +160,14 @@ async def get_ticket_status(
     url: str | None = None
     if platform == "jira":
         try:
-            from tasks.ticketing import _JIRA_URL  # type: ignore[import]
+            from workers.tasks.ticketing import _JIRA_URL  # type: ignore[import]
 
             url = f"{_JIRA_URL}/browse/{ticket_id}"
         except ImportError:
             pass
     elif platform == "servicenow":
         try:
-            from tasks.ticketing import _SNOW_URL  # type: ignore[import]
+            from workers.tasks.ticketing import _SNOW_URL  # type: ignore[import]
 
             url = f"{_SNOW_URL}/nav_to.do?uri=incident.do?number={ticket_id}"
         except ImportError:

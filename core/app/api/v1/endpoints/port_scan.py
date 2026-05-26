@@ -23,7 +23,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.port_scanner import run_port_scan
+    from workers.tasks.port_scanner import run_port_scan
     _PORT_SCAN_AVAILABLE = True
 except ImportError:
     _PORT_SCAN_AVAILABLE = False

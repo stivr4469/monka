@@ -29,7 +29,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.human_osint import run_human_osint
+    from workers.tasks.human_osint import run_human_osint
     _HUMAN_OSINT_AVAILABLE = True
 except ImportError:
     _HUMAN_OSINT_AVAILABLE = False

@@ -25,7 +25,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.tech_profiler import run_tech_profiler
+    from workers.tasks.tech_profiler import run_tech_profiler
     _TECH_PROFILER_AVAILABLE = True
 except ImportError:
     _TECH_PROFILER_AVAILABLE = False

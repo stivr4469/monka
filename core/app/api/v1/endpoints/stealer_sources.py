@@ -23,7 +23,7 @@ from app.workers_client import ensure_workers_path, get_executor
 ensure_workers_path()
 
 try:
-    from tasks.stealer_sources import query_stealer_sources
+    from workers.tasks.stealer_sources import query_stealer_sources
     _SOURCES_AVAILABLE = True
 except ImportError as _e:
     _SOURCES_AVAILABLE = False

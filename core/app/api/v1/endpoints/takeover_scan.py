@@ -24,7 +24,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.takeover_detector import scan_takeover
+    from workers.tasks.takeover_detector import scan_takeover
     _TAKEOVER_AVAILABLE = True
 except ImportError:
     _TAKEOVER_AVAILABLE = False

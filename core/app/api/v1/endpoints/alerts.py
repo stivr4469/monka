@@ -180,7 +180,7 @@ async def test_alert_rule(
     }
 
     try:
-        from tasks.telegram_alerts import send_telegram_alert
+        from workers.tasks.telegram_alerts import send_telegram_alert
 
         success = send_telegram_alert(
             chat_id=rule.telegram_chat_id,

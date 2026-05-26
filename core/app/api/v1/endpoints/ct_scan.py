@@ -25,7 +25,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.ct_monitor import check_ct
+    from workers.tasks.ct_monitor import check_ct
     _CT_MONITOR_AVAILABLE = True
 except ImportError:
     _CT_MONITOR_AVAILABLE = False

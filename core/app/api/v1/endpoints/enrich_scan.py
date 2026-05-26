@@ -24,7 +24,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.shodan_enricher import run_shodan_enrichment
+    from workers.tasks.shodan_enricher import run_shodan_enrichment
     _SHODAN_AVAILABLE = True
 except ImportError:
     _SHODAN_AVAILABLE = False

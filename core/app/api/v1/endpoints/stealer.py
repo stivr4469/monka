@@ -24,7 +24,7 @@ router = APIRouter(prefix="/stealer", tags=["stealer-logs"])
 ensure_workers_path()
 
 try:
-    from tasks.stealer_parser import parse_stealer_log
+    from workers.tasks.stealer_parser import parse_stealer_log
     _PARSER_AVAILABLE = True
 except ImportError:
     _PARSER_AVAILABLE = False

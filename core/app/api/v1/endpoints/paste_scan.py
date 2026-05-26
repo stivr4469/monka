@@ -18,7 +18,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.paste_monitor import monitor_pastes
+    from workers.tasks.paste_monitor import monitor_pastes
     _PASTE_MONITOR_AVAILABLE = True
 except ImportError:
     _PASTE_MONITOR_AVAILABLE = False

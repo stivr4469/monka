@@ -26,7 +26,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.cookie_validator import validate_cookies_from_zip
+    from workers.tasks.cookie_validator import validate_cookies_from_zip
     _COOKIE_VALIDATOR_AVAILABLE = True
 except ImportError:
     _COOKIE_VALIDATOR_AVAILABLE = False

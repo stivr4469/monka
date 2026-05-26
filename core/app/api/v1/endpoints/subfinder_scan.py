@@ -19,7 +19,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.subfinder import run_subfinder_standalone
+    from workers.tasks.subfinder import run_subfinder_standalone
     _SUBFINDER_AVAILABLE = True
 except ImportError:
     _SUBFINDER_AVAILABLE = False

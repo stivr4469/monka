@@ -20,7 +20,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.telegram_monitor import DEFAULT_LEAK_CHANNELS, monitor_telegram_channels
+    from workers.tasks.telegram_monitor import DEFAULT_LEAK_CHANNELS, monitor_telegram_channels
     _TELEGRAM_MONITOR_AVAILABLE = True
 except ImportError:
     _TELEGRAM_MONITOR_AVAILABLE = False

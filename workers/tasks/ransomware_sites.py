@@ -37,42 +37,102 @@ _WWW_RE = re.compile(r"^(https?://)?(www\.)?", re.IGNORECASE)
 # ── Свежие .onion-адреса (май 2026, источник: ransomwatch/groups.json) ──────────
 # Только группы с available=True в groups.json, по одному адресу на группу
 ONION_SITES: dict[str, str] = {
-    # LockBit 3.0 — крупнейшая RaaS, атаки на 2000+ организаций
-    "lockbit3": "http://lockbit3753ekiocyo5epmpy6klmejchjtzddoekjlnt6mu3qh4de2id.onion",
+    # LockBit 3.0 — крупнейшая RaaS, 57 зеркал (RansomWatch: available ✅ 2025-06-17)
+    "lockbit3": "http://lockbitqfj7mmhrfa7lznj47ogknqanskj7hyk2vistn2ju5ufrhbpyd.onion",
 
-    # RansomHouse — специализируется на двойном вымогательстве
+    # RansomHouse — двойное вымогательство (RansomWatch: available ✅ 2025-06-17)
     "ransomhouse": "http://zohlm7ahjwegcedoz7lrdrti7bvpofymcayotp744qhx6gjmxbuo2yid.onion",
 
-    # Medusa — активна с 2023, атакует критическую инфраструктуру
-    "medusa": "http://xfv4jzckytb4g3ckwemcny3ihv4i5p4lqzdpi624cxisu35my5fwi5qd.onion",
+    # Medusa — критическая инфраструктура (RansomWatch: available ✅ 2025-06-17)
+    "medusa": "http://xfv4jzckytb4g3ckwemcny3ihv4i5p4lqzdpi624cxisu35my5fwi5qd.onion/api/search?company=&page=0",
 
-    # Clop — специализируется на MOVEit, GoAnywhere (Shell.com 2021)
+    # Clop — MOVEit/GoAnywhere (RansomWatch: available ✅ 2025-06-17)
     "clop": "http://santat7kpllt6iyvqbr7q4amdv6dzrh6paatvyrzl7ry3zm72zigf4ad.onion",
 
-    # RansomEXX — атакует государственные структуры и банки
+    # RansomEXX — госструктуры и банки (RansomWatch: available ✅ 2025-06-17)
     "ransomexx": "http://rnsm777cdsjrsdlbs4v5qoeppu3px6sb2igmh53jzrx7ipcrbjz5b2ad.onion",
 
-    # Everest — специализируется на данных сотрудников
+    # Everest — утечки данных сотрудников (RansomWatch: available ✅ 2025-06-17)
     "everest": "http://ransomocmou6mnbquqz44ewosbkjk3o5qjsl3orawojexfook2j7esad.onion",
 
-    # Akira — JS-rendered, атакует VMware ESXi
-    "akira": "http://akiral2iz6a7qgd3ayp3l6yub7xx2uep76idk3u2kollpj5z3z636bad.onion",
+    # Akira — VMware ESXi, JS-рендер, https (RansomWatch: available ✅ 2025-06-17)
+    "akira": "https://akiralkzxzq2dsrzsrvbr2xgbbu2wgsmxryd4csgfameg52n7efvr2id.onion",
 
-    # Play (PlayCrypt) — отказывается от RaaS-модели
-    "play": "http://k7kg3jqxang3wh7hnmaiokchk7qoebupfgoik6rha6mjpzwupwtj25yd.onion",
+    # Play (PlayCrypt) — без RaaS-модели (RansomWatch: available ✅ 2025-06-17)
+    "play": "http://ipi4tiumgzjsym6pyuzrfqrtwskokxokqannmd6sa24shvr7x5kxdvqd.onion",
 
-    # Hunters International — наследник Hive
-    "hunters": "http://hunters55rdxciehoqzwv7vgyv6nt37tbwax2reroyzxhou7my5ejyid.onion",
+    # Hunters International — наследник Hive, JSON API (RansomWatch: available ✅ 2025-06-17)
+    "hunters": "https://hunters55rdxciehoqzwv7vgyv6nt37tbwax2reroyzxhou7my5ejyid.onion/api/public/companies",
 
-    # Rhysida — атакует healthcare и образование
-    "rhysida": "http://rhysidafohrhyy2aszi7bm32tnjat5xri65fopcxkdfxhi4tidsg7cad.onion",
+    # Rhysida — healthcare и образование (RansomWatch: available ✅ 2025-06-17)
+    "rhysida": "http://rhysidafc6lm7qa2mkiukbezh7zuth3i4wof4mh2audkymscjm6yegad.onion/archive.php?last&auction",
 
-    # Stormous — атаки на правительственные ресурсы
+    # Stormous — правительственные ресурсы (RansomWatch: available ✅ 2025-06-17)
     "stormous": "http://pdcizqzjitsgfcgqeyhuee5u6uki6zy5slzioinlhx6xjnsw25irdgqd.onion",
+
+    # BlackCat/ALPHV — Rust-based RaaS, ликвидирована ФБР 2024 (offline ❌)
+    "blackcat": "http://alphvmmm27o3abo3r2mlmjrpdmzle3rykajqc5xsj7j7ejksbpsa36ad.onion",
+
+    # 8Base — активна с 2022 (RansomWatch: available ✅ 2025-06-17)
+    "8base": "http://xb6q2aggycmlcrjtbjendcnnwpmmwbosqaugxsqb4nx6cmod3emy7sad.onion",
+
+    # BianLian — healthcare/финансы (RansomWatch: offline ❌ 2025-04-03)
+    "bianlian": "http://bianlianlbc5an4kgnay3opdemgcryg2kpfcbgczopmm3dnbz3uaunad.onion/companies/",
+
+    # Cactus — двойное вымогательство (RansomWatch: offline ❌ 2025-04-07)
+    "cactus": "https://cactusbloguuodvqjmnzlwetjlpj6aggc6iocwhuupb47laukux7ckid.onion",
+
+    # INC Ransom — NHS/Xerox/Yamaha, JSON API (RansomWatch: available ✅ 2025-06-17)
+    "incransom": "http://incbacg6bfwtrlzwdbqc55gsfl763s3twdtwhp27dzuik6s6rwdcityd.onion/api/v1/blog/get/announcements?page=1&perPage=15",
+
+    # Qilin — Bloomberg UK/healthcare, JS-рендер (RansomWatch: offline ❌ 2025-05-10)
+    "qilin": "http://kbsqoivihgdmwczmxkbovk7ss2dcynitwhhfu5yw725dboqo5kthfaad.onion",
+
+    # RansomHub — наиболее активны 2024-2025, JS-рендер (RansomWatch: offline ❌)
+    "ransomhub": "http://ransomxifxwc5eteopdobynonjctkxxvap77yqifu2emfbecgbqdw6qd.onion",
+
+    # KillSec — финансовый extortion (RansomWatch: available ✅ 2025-06-17)
+    "killsec": "http://ks5424y3wpr5zlug5c7i6svvxweinhbdcqcfnptkfcutrncfazzgz5id.onion",
+
+    # FOG — образование и финансы (RansomWatch: offline ❌ 2025-06-05)
+    "fog": "https://xql562evsy7njcsngacphc2erzjfecwotdkobn3m4uxu2gtqh26newid.onion/",
+
+    # Cicada3301 — RaaS на Rust (RansomWatch: available ✅ 2025-06-17)
+    "cicada3301": "http://cicadabv7vicyvgz5khl7v2x5yygcgow7ryy6yppwmxii4eoobdaztqd.onion",
+
+    # Meow — аукционная продажа данных (RansomWatch: offline ❌ 2024-11-26)
+    "meow": "http://meow6xanhzfci2gbkn3lmbqq7xjjufskkdfocqdngt3ltvzgqpsg5mid.onion/backend/post/getPosts?page=1&search=",
+
+    # Space Bears — корпоративный сектор (RansomWatch: available ✅ 2025-06-17)
+    "spacebears": "http://5butbkrljkaorg5maepuca25oma7eiwo6a2rlhvkblb4v6mf3ki2ovid.onion/",
+}
+
+# Зеркала LockBit 3 — используются как fallback если основной недоступен
+LOCKBIT3_MIRRORS: list[str] = [
+    "http://lockbitqfj7mmhrfa7lznj47ogknqanskj7hyk2vistn2ju5ufrhbpyd.onion",
+    "http://lockbitkwkmhfb2zr3ngduaa6sd6munslzkbtqhn5ifmwqml4sl7znad.onion",
+    "http://lockbiti7ss2wzyizvyr2x46krnezl4xjeianvupnvazhbqtz32auqqd.onion",
+    "http://lockbitfhzimjqx2v7p2vfu57fpdm5zh2vsbfk5jkjod3k5pszbek7ad.onion",
+    "http://lockbitck6escin3p33v3f5uef3mr5fx335oyqon2uqoyxuraieuhiqd.onion",
+]
+
+# Группы переехавшие на clearnet (Tor не нужен, мониторятся через clearweb-запросы)
+CLEARNET_SITES: dict[str, str] = {
+    # Black Basta — наследник Conti (RansomWatch: clearnet 2025-04-03)
+    "blackbasta": "http://databasebb.top",
+
+    # Lynx — критическая инфраструктура США (RansomWatch: clearnet 2025-05-26)
+    "lynx": "http://lynxblog.net/api/v1/blog/get/announcements?page=1&perPage=10",
+
+    # Cloak — IAB + ransom (RansomWatch: clearnet, available ✅ 2025-06-17)
+    "cloak": "http://cloak.su/blog.php",
+
+    # Dispossessor — МСБ (RansomWatch: clearnet 2025-06-17)
+    "dispossessor": "https://radar.ltd/dashboard",
 }
 
 # Сайты, которые рендерят жертв через JavaScript — нужен Playwright
-_JS_RENDERED_GROUPS = {"lockbit3", "akira"}
+_JS_RENDERED_GROUPS = {"lockbit3", "akira", "bianlian", "qilin", "ransomhub"}
 
 
 def _normalize_domain(domain: str) -> str:
@@ -473,6 +533,37 @@ def monitor_ransomware_sites(
     tor_client = get_tor_client()
     if tor_client is None:
         return {"error": "Tor client creation failed", "tor_required": True}
+
+    # Clearnet-сайты проверяем без Tor
+    with httpx.Client(timeout=30.0, follow_redirects=True) as clear_client:
+        for group_name, clear_url in CLEARNET_SITES.items():
+            try:
+                resp = clear_client.get(clear_url, headers={"User-Agent": _get_random_ua()})
+                victims = _parse_victims(resp.text, group_name)
+                groups_checked += 1
+                for victim in victims:
+                    searchable = (victim.get("victim","") + " " + victim.get("domain","")).lower()
+                    if not _domain_mentioned(searchable, domain_variants):
+                        continue
+                    found += 1
+                    event: dict[str, Any] = {
+                        "event_type": "ransomware_mention",
+                        "severity": "critical",
+                        "source_type": "darknet",
+                        "source_name": "ransomware_sites",
+                        "target_domain": domain_clean,
+                        "payload": {
+                            "group": group_name,
+                            "victim": victim.get("victim", ""),
+                            "onion_url": clear_url,
+                            "published_at": victim.get("published_at", ""),
+                            "victim_domain": victim.get("domain", ""),
+                        },
+                    }
+                    if _send_ingest_event(ingest_url, ingest_headers, event):
+                        sent += 1
+            except Exception as exc:
+                logger.warning("[ransomware_sites][%s] clearnet ошибка: %s", group_name, exc)
 
     try:
         with tor_client:

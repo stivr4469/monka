@@ -117,7 +117,7 @@ def discover_attribution(
     Время выполнения: ~5-30 секунд (зависит от количества ASN и rate-limit BGPView).
     """
     try:
-        from tasks.attribution_engine import run_attribution
+        from workers.tasks.attribution_engine import run_attribution
     except ImportError as exc:
         logger.error("[attribution] Импорт attribution_engine: %s", exc)
         raise HTTPException(status_code=503, detail="Attribution engine недоступен") from exc
@@ -152,7 +152,7 @@ def get_asn_prefixes(
         raise HTTPException(status_code=400, detail="Некорректный номер ASN")
 
     try:
-        from tasks.attribution_engine import get_asn_prefixes as _get_prefixes, _count_ips
+        from workers.tasks.attribution_engine import get_asn_prefixes as _get_prefixes, _count_ips
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="Attribution engine недоступен") from exc
 
@@ -217,7 +217,7 @@ async def auto_suggest_assets(
     """
     # Импортируем движок attribution (синхронная функция → thread pool)
     try:
-        from tasks.attribution_engine import run_attribution
+        from workers.tasks.attribution_engine import run_attribution
     except ImportError as exc:
         logger.error("[auto-suggest] Импорт attribution_engine: %s", exc)
         raise HTTPException(status_code=503, detail="Attribution engine недоступен") from exc

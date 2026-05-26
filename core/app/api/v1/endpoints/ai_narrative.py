@@ -24,7 +24,7 @@ _workers_path = str(Path(__file__).parents[5] / "workers")
 if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 
-from tasks.ai_narrative import _MODEL, _ANTHROPIC_AVAILABLE, generate_risk_narrative  # noqa: E402
+from workers.tasks.ai_narrative import _MODEL, _ANTHROPIC_AVAILABLE, generate_risk_narrative  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

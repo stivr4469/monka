@@ -20,7 +20,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.s3_scanner import run_s3_scan
+    from workers.tasks.s3_scanner import run_s3_scan
     _S3_AVAILABLE = True
 except ImportError:
     _S3_AVAILABLE = False

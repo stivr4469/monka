@@ -17,7 +17,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.domain_hardening import run_domain_hardening
+    from workers.tasks.domain_hardening import run_domain_hardening
     _HARDENING_AVAILABLE = True
 except ImportError:
     _HARDENING_AVAILABLE = False

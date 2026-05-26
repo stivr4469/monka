@@ -17,7 +17,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.phishing_detector import detect_phishing_domains
+    from workers.tasks.phishing_detector import detect_phishing_domains
     _PHISHING_AVAILABLE = True
 except ImportError:
     _PHISHING_AVAILABLE = False

@@ -28,7 +28,7 @@ if _workers_path not in sys.path:
     sys.path.insert(0, _workers_path)
 
 try:
-    from tasks.remediation_hints import get_hints as _get_hints
+    from workers.tasks.remediation_hints import get_hints as _get_hints
     _HINTS_AVAILABLE = True
 except ImportError:
     _HINTS_AVAILABLE = False

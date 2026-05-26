@@ -1,6 +1,12 @@
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# Добавляем корень проекта в sys.path чтобы работали импорты `from workers.tasks.*`
+_PROJECT_ROOT = str(Path(__file__).parents[2])
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from typing import Annotated
 

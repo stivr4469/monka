@@ -25,7 +25,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.darknet_monitor import monitor_darknet
+    from workers.tasks.darknet_monitor import monitor_darknet
     _DARKNET_MONITOR_AVAILABLE = True
 except ImportError:
     _DARKNET_MONITOR_AVAILABLE = False

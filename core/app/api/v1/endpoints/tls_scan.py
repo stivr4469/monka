@@ -23,7 +23,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.tls_fingerprinter import run_tls_scan
+    from workers.tasks.tls_fingerprinter import run_tls_scan
     _TLS_AVAILABLE = True
 except ImportError:
     _TLS_AVAILABLE = False

@@ -25,7 +25,7 @@ router = APIRouter(prefix="/breach", tags=["breach"])
 ensure_workers_path()
 
 try:
-    from tasks.breach_checker import check_domain_emails, discover_and_check
+    from workers.tasks.breach_checker import check_domain_emails, discover_and_check
     _BREACH_CHECKER_AVAILABLE = True
 except ImportError:
     _BREACH_CHECKER_AVAILABLE = False

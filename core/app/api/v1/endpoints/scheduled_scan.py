@@ -133,49 +133,49 @@ def _run_full_scan_background(domain: str, port: int) -> None:
 
     # 1. TLS / JA4 — сертификаты, WAF, протоколы
     def _tls():
-        from tasks.tls_fingerprinter import run_tls_scan
+        from workers.tasks.tls_fingerprinter import run_tls_scan
         run_tls_scan(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("tls_scan", _tls)
 
     # 2. HTTP Hardening — заголовки безопасности, HSTS, CSP
     def _hardening():
-        from tasks.domain_hardening import run_domain_hardening
+        from workers.tasks.domain_hardening import run_domain_hardening
         run_domain_hardening(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("hardening", _hardening)
 
     # 3. Technology Profiling — CMS, фреймворки, EOL-версии
     def _tech():
-        from tasks.tech_profiler import run_tech_profiler
+        from workers.tasks.tech_profiler import run_tech_profiler
         run_tech_profiler(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("tech_profiler", _tech)
 
     # 4. Phishing Detection — тайпосквот и фишинговые домены
     def _phishing():
-        from tasks.phishing_detector import detect_phishing_domains
+        from workers.tasks.phishing_detector import detect_phishing_domains
         detect_phishing_domains(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("phishing_detector", _phishing)
 
     # 5. Port Scan — открытые порты и сервисы
     def _ports():
-        from tasks.port_scanner import run_port_scan
+        from workers.tasks.port_scanner import run_port_scan
         run_port_scan(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("port_scanner", _ports)
 
     # 6. Darknet Monitor — RansomWatch + Ahmia + DarkSearch
     def _darknet():
-        from tasks.darknet_monitor import monitor_darknet
+        from workers.tasks.darknet_monitor import monitor_darknet
         monitor_darknet(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("darknet_monitor", _darknet)
 
     # 7. Paste Monitor — Pastebin и аналоги
     def _paste():
-        from tasks.paste_monitor import monitor_pastes
+        from workers.tasks.paste_monitor import monitor_pastes
         monitor_pastes(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("paste_monitor", _paste)
 
     # 8. GitHub Search — упоминания домена в коде
     def _github():
-        from tasks.github_search import search_github
+        from workers.tasks.github_search import search_github
         if settings.GITHUB_TOKEN:
             search_github(
                 domain=domain,
@@ -189,7 +189,7 @@ def _run_full_scan_background(domain: str, port: int) -> None:
 
     # 9. Gitleaks — секреты в репозиториях
     def _gitleaks():
-        from tasks.gitleaks import scan_github_results
+        from workers.tasks.gitleaks import scan_github_results
         if settings.GITHUB_TOKEN:
             scan_github_results(
                 domain=domain,
@@ -209,25 +209,25 @@ def _run_full_scan_background(domain: str, port: int) -> None:
 
     # 11. S3 — открытые бакеты
     def _s3():
-        from tasks.s3_scanner import run_s3_scan
+        from workers.tasks.s3_scanner import run_s3_scan
         run_s3_scan(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("s3_scanner", _s3)
 
     # 12. Subdomain Takeover — захват поддоменов (требует список поддоменов)
     def _takeover():
-        from tasks.takeover_detector import scan_takeover
+        from workers.tasks.takeover_detector import scan_takeover
         scan_takeover(domain=domain, subdomains=[], core_api_url=core_api_url, internal_secret=sec)
     _run("takeover_detector", _takeover)
 
     # 13. Telegram Monitor — упоминания домена в публичных leak-каналах
     def _telegram():
-        from tasks.telegram_monitor import monitor_telegram_channels
+        from workers.tasks.telegram_monitor import monitor_telegram_channels
         monitor_telegram_channels(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("telegram_monitor", _telegram)
 
     # 14. Beaconing Detector — проверка IP по фидам Feodo/URLhaus/ThreatFox
     def _beaconing():
-        from tasks.beaconing_detector import run_beaconing_detection
+        from workers.tasks.beaconing_detector import run_beaconing_detection
         run_beaconing_detection(
             domain=domain,
             core_api_url=core_api_url,

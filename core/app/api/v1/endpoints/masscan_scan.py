@@ -30,7 +30,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.masscan_scanner import scan_domain
+    from workers.tasks.masscan_scanner import scan_domain
     _MASSCAN_AVAILABLE = True
 except ImportError:
     _MASSCAN_AVAILABLE = False

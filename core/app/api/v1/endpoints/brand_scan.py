@@ -23,13 +23,13 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.brand_monitor import monitor_brand
+    from workers.tasks.brand_monitor import monitor_brand
     _BRAND_MONITOR_AVAILABLE = True
 except ImportError:
     _BRAND_MONITOR_AVAILABLE = False
 
 try:
-    from tasks.telegram_monitor import monitor_brand_telegram
+    from workers.tasks.telegram_monitor import monitor_brand_telegram
     _TELEGRAM_BRAND_AVAILABLE = True
 except ImportError:
     _TELEGRAM_BRAND_AVAILABLE = False

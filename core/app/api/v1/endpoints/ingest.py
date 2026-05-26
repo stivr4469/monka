@@ -98,7 +98,7 @@ def _auto_condition(event_type: str, payload: dict) -> str | None:
 ensure_workers_path()
 
 try:
-    from tasks.telegram_alerts import dispatch_alerts as _dispatch_alerts
+    from workers.tasks.telegram_alerts import dispatch_alerts as _dispatch_alerts
     _ALERTS_AVAILABLE = True
 except ImportError:
     _ALERTS_AVAILABLE = False

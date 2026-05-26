@@ -28,7 +28,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.whois_monitor import check_whois
+    from workers.tasks.whois_monitor import check_whois
     _WHOIS_AVAILABLE = True
 except ImportError:
     _WHOIS_AVAILABLE = False

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/scan", tags=["scan"])
 ensure_workers_path()
 
 try:
-    from tasks.mobile_monitor import monitor_mobile_apps
+    from workers.tasks.mobile_monitor import monitor_mobile_apps
     _MOBILE_MONITOR_AVAILABLE = True
 except ImportError:
     _MOBILE_MONITOR_AVAILABLE = False
