@@ -1,57 +1,45 @@
 # SESSION SNAPSHOT — Monitoring_utechek/core
-**Дата:** 2026-05-25  
+**Дата:** 2026-05-26  
 **Ветка:** main  
-**Последний коммит:** 30f029c
+**Последний коммит:** 86591a3
 
 ---
 
 ## 1. СТАТУС ТЕСТОВ
 
-### Финальный прогон (30f029c):
+### Последний прогон (86591a3):
 ```
 651 passed, 0 failed, 6 warnings — 13:18
 ```
-
-### История сессии:
-```
-Начало сессии: 320 passed (0 failed)  — база
-После фаз 11-13: 455 passed
-После BGP/Mobile/Remediation: 583 passed
-После Ticketing/Comparison/Benchmarking: 623 passed
-После code review fixes: 651 passed ✅
-```
+> Новые тесты этой сессии ещё не писались — баги в воркерах, не в API.
 
 ---
 
-## 2. ЧТО РЕАЛИЗОВАНО В ЭТОЙ СЕССИИ (фазы 11–13)
+## 2. ЧТО РЕАЛИЗОВАНО В ЭТОЙ СЕССИИ
 
-### Phase 11 — Security Score + Dashboard
-| Задача | Файл | Статус |
-|--------|------|--------|
-| 11.A+B Score Engine | `core/app/services/score_engine.py` | ✅ |
-| 11.C Executive Dashboard | `core/app/api/v1/endpoints/dashboard.py` | ✅ |
-| 11.D Remediation Hints | `workers/tasks/remediation_hints.py` | ✅ |
+### Новый endpoint
+| Файл | Endpoint | Что делает |
+|------|----------|-----------|
+| `core/app/api/v1/endpoints/quick_scan.py` | `POST /api/v1/scan/quick` | Принимает `{"domain":"..."}`, сам создаёт org+asset, запускает full scan, возвращает asset_id |
+| `core/app/api/v1/router.py` | — | Зарегистрирован quick_scan router |
 
-### Phase 12 — Brand Safety
-| Задача | Файл | Статус |
-|--------|------|--------|
-| 12.A CT Monitor | `workers/tasks/ct_monitor.py` | ✅ |
-| 12.B+E Brand Monitor | `workers/tasks/brand_monitor.py` | ✅ |
-| 12.C Supply Chain | Asset.asset_type + parent_asset_id | ✅ |
-| 12.D Mobile App Monitor | `workers/tasks/mobile_monitor.py` | ✅ |
+### Баги исправлены
+| # | Файл | Проблема | Исправление |
+|---|------|----------|-------------|
+| B1 | `core/app/api/v1/endpoints/events.py` | `asset_id` в query params не работал (не было в сигнатуре функции) | Добавлен `asset_id: str \| None = Query(...)` + `q.where(Event.asset_id == asset_id)` |
+| B2 | `workers/tasks/phishing_detector.py` | payload имел ключи `typosquat/technique`, отображение ожидало `domain/type` | Переименованы в `domain/type`, `technique` оставлен как алиас |
+| B3 | `workers/tasks/tls_fingerprinter.py` | Нет полей `grade` и `protocol` в payload | Добавлена функция `_tls_grade()` (A/B/C/F), поля `grade` и `protocol` |
+| B4 | `workers/tasks/nuclei.py` | Нет поля `title` в payload | Добавлен `title` как алиас для `name`, добавлен `severity` |
+| B5 | `workers/tasks/gitleaks.py` | Research-репозитории (Tracking-Pixels и др.) клонировались и давали 111 FP CRITICAL | Добавлен `_is_fp_repo()` regex-фильтр при сборе репозиториев |
+| B6 | `core/app/api/v1/endpoints/scheduled_scan.py` | Telegram monitor не запускался в full scan (был только шаг 12) | Добавлен шаг 13 — `telegram_monitor` |
+| B7 | `core/app/services/graph_client.py` | Neo4j статус писался на `logger.debug` — невидимо | Изменён на `logger.info` |
+| B8 | `workers/tasks/domain_hardening.py` | DNS misconfig писался как `event_type=vulnerability` | Изменён на `event_type=dns_misconfig`, `source_type=scanner` |
+| B9 | `workers/tasks/gitleaks.py` | SMS-бомберы (SMSBomer, SMS-ATTACK, Maxwell-spammer и др.) клонировались → 74 CRITICAL FP secret_leaks | FP-фильтр расширен: 19/19 attack-репозиториев пропускаются |
 
-### Phase 13 — Enterprise
-| Задача | Файл | Статус |
-|--------|------|--------|
-| 13.A masscan | `workers/tasks/masscan_scanner.py` | ✅ |
-| 13.B Censys | `workers/tasks/censys_enricher.py` | ✅ |
-| 13.C WHOIS Monitor | `workers/tasks/whois_monitor.py` | ✅ |
-| 13.D BGP/ASN Monitor | `workers/tasks/bgp_monitor.py` | ✅ |
-| 13.E STIX 2.1 Export | `workers/tasks/stix_export.py` | ✅ |
-| 13.F Industry Benchmarking | `core/app/services/benchmarking.py` | ✅ |
-| 13.G AI Risk Narrative | `workers/tasks/ai_narrative.py` | ✅ |
-| 13.H Jira/ServiceNow Tickets | `workers/tasks/ticketing.py` | ✅ |
-| 13.I Multi-org Comparison | `core/app/api/v1/endpoints/comparison.py` | ✅ |
+### GitHub token
+```
+core/.env: GITHUB_TOKEN=REDACTED_GITHUB_TOKEN
+```
 
 ---
 
@@ -64,51 +52,80 @@ core/
 │   ├── db.py
 │   ├── api/
 │   │   ├── deps.py              # CurrentUser (JWT + API key unified)
-│   │   └── v1/endpoints/        # 44 endpoints
+│   │   └── v1/endpoints/        # 45+ endpoints
+│   │       ├── quick_scan.py    # POST /scan/quick — one-click scan
+│   │       ├── scheduled_scan.py# full_scan 13 шагов
+│   │       ├── events.py        # GET events + фильтр по asset_id (исправлен)
 │   │       ├── dashboard.py     # GET /dashboard/executive, /dashboard/benchmark
 │   │       ├── score.py         # GET /assets/{id}/score, /score/history
-│   │       ├── comparison.py    # GET /comparison/orgs, /comparison/portfolio
-│   │       ├── stix_export.py   # GET /export/stix
-│   │       ├── ai_narrative.py  # POST /ai/narrative
-│   │       ├── tickets.py       # POST/GET /events/{id}/ticket
-│   │       ├── events.py        # GET events + PATCH resolve + GET hints
-│   │       ├── whois_scan.py    # POST /scan/whois
-│   │       ├── ct_scan.py       # POST /scan/ct
-│   │       ├── masscan_scan.py  # POST /scan/masscan (Enterprise only)
-│   │       ├── brand_scan.py    # POST /scan/brand
-│   │       ├── censys_scan.py   # POST /scan/censys
-│   │       ├── bgp_scan.py      # POST /scan/bgp
-│   │       ├── mobile_scan.py   # POST /scan/mobile
-│   │       └── ... (30+ других)
-│   ├── services/
-│   │   ├── score_engine.py      # calculate_score(), 6 категорий, time decay
-│   │   └── benchmarking.py      # compare_with_benchmark(), 8 отраслей
-│   └── models/
-│       ├── event.py             # resolved, resolved_by, ticket_ref поля добавлены
-│       ├── asset.py             # asset_type, parent_asset_id поля добавлены
-│       ├── organization.py      # industry поле добавлено
-│       └── score_snapshot.py    # новая модель
+│   │       └── ... (40+ других)
+│   └── services/
+│       ├── score_engine.py      # calculate_score(), 6 категорий, time decay
+│       ├── graph_client.py      # Neo4j Attack Path (опционально, NEO4J_URI)
+│       └── benchmarking.py
 workers/
 ├── tasks/                       # 39 воркеров
-│   ├── score_engine.py
-│   ├── whois_monitor.py         # RDAP, baseline comparison
-│   ├── ct_monitor.py            # crt.sh + Levenshtein
-│   ├── masscan_scanner.py       # masscan + nmap -sV
-│   ├── brand_monitor.py         # Reddit + HN + Telegram
-│   ├── censys_enricher.py       # Censys Search API
-│   ├── bgp_monitor.py           # BGPView API
-│   ├── mobile_monitor.py        # iTunes + Google Play
-│   ├── ai_narrative.py          # Claude API + static fallback
-│   ├── stix_export.py           # STIX 2.1 без зависимостей
-│   ├── ticketing.py             # Jira REST + ServiceNow REST
-│   ├── remediation_hints.py     # 14 типов событий → actionable советы
-│   └── ... (27 других)
+│   ├── domain_hardening.py      # SPF/DMARC/AXFR/SSL → event_type=dns_misconfig
+│   ├── phishing_detector.py     # typosquat DNS → event_type=phishing_domain
+│   ├── tls_fingerprinter.py     # TLS grade A/B/C/F, WAF detection
+│   ├── gitleaks.py              # GitHub secret scan + FP filter (19 attack-repo patterns)
+│   ├── github_search.py         # GitHub code search + FP filter + severity classify
+│   ├── telegram_monitor.py      # 25 leak-каналов (шаг 13 full scan)
+│   └── ... (33 других)
 tests/                           # 36 тест-файлов, 651 тест
 ```
 
 ---
 
-## 4. SCORE ENGINE
+## 4. FULL SCAN — 13 ШАГОВ
+
+```
+1.  subfinder         → subdomain
+2.  port_scanner      → exposed_service
+3.  nuclei            → vulnerability
+4.  tls_fingerprinter → tls_fingerprint  (grade A/B/C/F, WAF)
+5.  domain_hardening  → dns_misconfig    (SPF/DMARC/AXFR/SSL)
+6.  tech_profiler     → tech_profile
+7.  phishing_detector → phishing_domain  (typosquat DNS check)
+8.  github_search     → github_leak      (FP фильтрован)
+9.  gitleaks          → secret_leak      (FP: attack-repos пропущены)
+10. stealer_parser    → stealer_log
+11. ransomware_sites  → ransomware_mention
+12. tor_client        → dark_web_mention
+13. telegram_monitor  → telegram_mention
+```
+
+---
+
+## 5. РЕЗУЛЬТАТЫ РЕАЛЬНЫХ СКАНОВ
+
+### creditplus.ua — ~150 событий
+- 37 субдоменов, порты 80/443/8080/8443/22
+- TLS grade=A, Cloudflare WAF
+- Phishing: creditplus.net, creditplus.org, secure-creditplus.ua
+- GitHub leaks: 12 → все FP (после фикса filtered=12, sent=0)
+
+### credit7.ua — ~150 событий (до фиксов B1-B5)
+- Events API bug: без фильтра asset_id возвращал все 291 событий (2 домена)
+- После фикса: 150 событий только credit7.ua
+
+### e-groshi.com — 229 событий (скан от 2026-05-25)
+```
+subdomain       58  (admin, bitrix, moodle, sentry, rabbit, voip, vidu...)
+github_leak     74  (в основном SMS-бомберы — e-groshi.com как цель атак)
+secret_leak     74  → БЫЛИ FP из attack-repos; после фикса B9 новые сканы чисты
+exposed_service 13  (22/ssh, 80, 443, 8080, 8443)
+vulnerability    4  → на самом деле были dns_misconfig; исправлено фиксом B8
+phishing_domain  2  (e-groshi.net→91.206.200.104, egroshi.com→5.39.10.93)
+tls_fingerprint  2  (grade=A, TLSv1.3, Cloudflare)
+tech_profile     1  (WordPress, Django, Cloudflare)
+asset_drift      1
+```
+**Повторный скан e-groshi.com запущен 2026-05-26** — ожидается чистая картина без FP.
+
+---
+
+## 6. SCORE ENGINE
 
 ```python
 SCORE_CATEGORIES = {
@@ -121,14 +138,13 @@ SCORE_CATEGORIES = {
 }
 # Penalties: critical=-25, high=-10, medium=-4, low=-1
 # Time decay: T(t) = e^(-0.003 × Δt_days)
-# Endpoints: GET /assets/{id}/score, /organizations/{id}/score, /assets/{id}/score/history
 ```
 
 ---
 
-## 5. КЛЮЧЕВЫЕ ТЕХНИЧЕСКИЕ ДЕТАЛИ
+## 7. КЛЮЧЕВЫЕ ТЕХНИЧЕСКИЕ ДЕТАЛИ
 
-### Fire-and-forget паттерн (все scan endpoints):
+### Fire-and-forget (все scan endpoints):
 ```python
 loop = asyncio.get_running_loop()
 loop.run_in_executor(get_executor(), worker_func, domain, api_url, secret)
@@ -136,68 +152,45 @@ return JSONResponse({"status": "accepted"}, status_code=202)
 # НЕ await! — иначе блокирует event loop
 ```
 
-### Дедупликация воркеров:
+### Quick scan (новый):
 ```python
-# /tmp/brand_seen_{safe_domain}.json  — limit 5000
-# /tmp/mobile_seen_{safe_domain}.json — limit 5000
-# /tmp/ct_seen_{safe_domain}.json     — limit 1000 (ct_monitor)
-# /tmp/bgp_baseline_{safe_domain}.json
-# /tmp/whois_baseline_{safe_domain}.json
+# POST /api/v1/scan/quick {"domain": "example.com"}
+# 1. Get or create Personal org
+# 2. Get or create Asset
+# 3. get_executor().submit(_run_full_scan_background, domain, port)
+# → 202 + asset_id для polling
 ```
 
-### STIX 2.1 маппинг:
-```
-stealer_log / breach        → indicator (malicious-activity)
-port_scan                   → observed-data (network-traffic)
-nuclei_finding              → vulnerability (CVE если есть)
-dark_web_mention            → threat-actor
-ransomware_mention          → threat-actor
-остальные                   → observed-data (generic)
+### FP-фильтр gitleaks (расширенный):
+```python
+_FP_REPO_RE = re.compile(
+    # domain lists / research
+    r"tranco|domain.?list|tracking.?pixel|expired.?domain..."
+    # attack tools
+    r"|sms.?bomb|sms.?attack|smsbom|smsham|b0mb3r|bomber|spammer|spymer"
+    r"|rkr0k3|telebotpy|iisus|apk.?anti|tgsb"
+    # known attacker accounts
+    r"|antichristone|umutkara.?tools|imasender"
+)
+# Покрытие: 19/19 FP attack-репозиториев e-groshi.com
 ```
 
-### AI Narrative:
-```python
-# Claude Haiku с prompt caching (ephemeral на system prompt)
-# Fallback при отсутствии ANTHROPIC_API_KEY → static template
-# Grades: A(90+) B(75+) C(60+) D(45+) F(<45)
+### Rate limit dev-login:
 ```
-
-### Ticketing:
-```python
-# Jira REST API v3: POST /rest/api/3/issue (Basic Auth)
-# ServiceNow: POST /api/now/table/incident (Basic Auth)
-# Приоритет: Jira → ServiceNow fallback
-# ticket_ref формат: "jira:SEC-123" / "servicenow:INC0001234"
-```
-
-### Industry Benchmarking:
-```python
-# 8 отраслей: fintech/healthcare/ecommerce/saas/telecom/manufacturing/media/other
-# Live данные из ScoreSnapshot (≥5 org в отрасли), иначе статика
-# rank: below_average / average / above_average / top_quartile
-# GET /dashboard/benchmark
+5 req/min на /api/v1/auth/dev-login
+Использовать: curl "http://localhost:8000/api/v1/auth/dev-login?email=scanner@easm.local"
 ```
 
 ---
 
-## 6. CODE REVIEW FIXES (применены)
-
-| # | Severity | Проблема | Исправлени�� |
-|---|----------|----------|-------------|
-| 1 | CRITICAL | parents[6] → неверный путь к workers | parents[5] в stix_export.py, ai_narrative.py |
-| 2 | CRITICAL | await run_in_executor блокирует event loop | убран await в whois_scan.py, bgp_scan.py |
-| 3 | HIGH | get_event_loop() deprecated Python 3.12 | → get_running_loop() в censys_scan.py |
-| 4 | HIGH | Silent except без лога | logger.warning в benchmarking.py |
-| 5 | HIGH | org_name=UUID в AI narrative | загружаем org.name из БД |
-| 6 | HIGH | Неограниченный рост /tmp кэш-файлов | _MAX_SEEN_URLS=5000 в brand/mobile monitor |
-
----
-
-## 7. ПОЛЕЗНЫЕ КОМАНДЫ
+## 8. ЗАПУСК
 
 ```bash
-# Запуск тестов
+# Сервер
 cd /home/zastone/study/Monitoring_utechek/core
+nohup uvicorn app.main:app --port 8000 > /tmp/uv.log 2>&1 &
+
+# Тесты
 export SECRET_KEY="dev-secret-key-min-32-chars-here12"
 export INTERNAL_API_SECRET="dev-internal-secret"
 export FIRST_SUPERUSER_PASSWORD="SuperSecurePass123!"
@@ -205,53 +198,19 @@ export DATABASE_URL="sqlite+aiosqlite:///./demo.db"
 export DEV_MODE=true
 python3 -m pytest tests/ -q --tb=line 2>&1 | tail -5
 
-# Только новые тесты фаз 11-13
-python3 -m pytest tests/test_score_engine.py tests/test_dashboard.py tests/test_benchmarking.py \
-  tests/test_whois_monitor.py tests/test_ct_monitor.py tests/test_masscan_scanner.py \
-  tests/test_brand_monitor.py tests/test_censys_enricher.py tests/test_bgp_monitor.py \
-  tests/test_mobile_monitor.py tests/test_ai_narrative.py tests/test_stix_export.py \
-  tests/test_ticketing.py tests/test_comparison.py tests/test_remediation.py \
-  tests/test_supply_chain.py -q
-
-# Запуск приложения
-uvicorn app.main:app --reload --port 8000
+# Скан домена
+TOKEN=$(curl -s "http://localhost:8000/api/v1/auth/dev-login?email=scanner@easm.local" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+curl -s -X POST "http://localhost:8000/api/v1/scan/quick" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"domain":"example.com"}'
 ```
 
 ---
 
-## 8. ИСПРАВЛЕНИЯ БАГОВ (следующая сессия — реальный тест creditplus.ua)
+## 9. СЛЕДУЮЩИЕ ШАГИ
 
-| # | Severity | Файл | Проблема → Исправление |
-|---|----------|------|------------------------|
-| 5 | HIGH | `port_scanner.py` | `"ip": ip` (параметр) → `"ip": host_ip` (из XML nmap) |
-| 6 | HIGH | `domain_hardening.py` | системный DNS (SERVFAIL) → false SPF-event; исправлено: `_make_resolver()` с 8.8.8.8/8.8.4.4, ловить только NXDOMAIN/NoAnswer |
-| 7 | MEDIUM | `subfinder.py` | crt.sh возвращал домены других зон; добавлен фильтр `endswith(f".{domain}")` |
-| 8 | MEDIUM | `ct_monitor.py` | нет retry на 502/503/504 от crt.sh; добавлен цикл 3 попытки с backoff |
-| 9 | MEDIUM | `bgp_monitor.py` | тихая ошибка DNS; добавлен `logger.warning` с текстом исключения |
-| 10 | MEDIUM | `paste_monitor.py` | неинформативный 401/403; добавлен обработчик с текстом "нет API-ключа" |
-| 12 | MEDIUM | `phishing_detector.py` | `event_type="vulnerability"` → `"phishing_domain"`, `source_type` → `"osint"` |
-| 13 | LOW | `intelx_api.py` | нет предупреждения на 403; добавлен хэндлер |
-| — | HIGH | `core/.env` | `GITHUB_TOKEN=` пустой → скопирован из корневого `.env` |
-| — | HIGH | `tor_client.py` | Tor cold-start: одна попытка = таймаут; добавлено 3 попытки с паузой 5 сек |
-| — | HIGH | `github_search.py` | все результаты `high`, FP не фильтровались → полный рефактор: `_is_false_positive()`, `_classify_severity()`, `_severity_reason()`, счётчик `filtered` |
-
-### GitHub FP-фильтр (детали):
-```python
-# 12 результатов для creditplus.ua → все FP (domain-ranking lists, research datasets)
-# После фильтра: filtered=12, sent=0  — правильно, реальных утечек нет
-# Severity logic:
-#   critical — .env/.cfg/.ini/.config  
-#   high     — .py/.js/.rb + password/api_key/secret
-#   medium   — .py/.js + token
-#   low      — .py/.js + email / неизвестное расширение
-```
-
----
-
-## 9. СЛЕДУЮЩИЕ ШАГИ (если продолжать)
-
+- Дождаться результатов повторного скана e-groshi.com (проверить: dns_misconfig вместо vulnerability, нет FP secret_leaks)
+- Запустить полный тест-сьют (651 тестов) — убедиться что фиксы B1-B9 не сломали тесты
 - MEDIUM: Race condition в /tmp файлах при параллельных сканах → fcntl.flock или Redis
 - MEDIUM: N+1 запросы в /comparison/portfolio → asyncio.gather()
-- MEDIUM: Вынести validate_domain и _safe_domain_filename в core/app/utils/
-- Phase 12.F / 13.J: Senior code review по всему добавленному коду (python-reviewer агент)
-- Реальное тестирование: запуск с настоящими CENSYS_API_ID, JIRA_URL, ANTHROPIC_API_KEY
+- Реальное тестирование с CENSYS_API_ID, JIRA_URL, ANTHROPIC_API_KEY

@@ -7,7 +7,7 @@
   3. AXFR   — попытка DNS Zone Transfer (разглашение всех записей зоны)
   4. SSL    — просроченный или отсутствующий TLS-сертификат
 
-Каждая проблема → NormalizedEvent(event_type="vulnerability", source_name="domain_hardening")
+Каждая проблема → NormalizedEvent(event_type="domain_hardening", source_name="domain_hardening")
 """
 import logging
 import socket
@@ -228,9 +228,9 @@ def run_domain_hardening(
     sent = 0
     for issue in all_issues:
         event = {
-            "event_type": "vulnerability",
+            "event_type": "domain_hardening",
             "severity": issue["severity"],
-            "source_type": "nuclei",  # используем nuclei как ближайший SourceType для периметра
+            "source_type": "scanner",
             "source_name": "domain_hardening",
             "target_domain": domain,
             "payload": {

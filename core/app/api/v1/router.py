@@ -26,6 +26,7 @@ from app.api.v1.endpoints import (
     mssp,
     notifications,
     paste_scan,
+    quick_scan,
     score,
     phishing_scan,
     masscan_scan,
@@ -93,6 +94,9 @@ api_router.include_router(alerts.router)
 
 # Проверка утечек
 api_router.include_router(breach.router)
+
+# Quick Scan — один домен → полное сканирование без предварительной настройки
+api_router.include_router(quick_scan.router)
 
 # Расписание сканирований
 api_router.include_router(scheduled_scan.router)

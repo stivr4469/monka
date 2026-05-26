@@ -48,15 +48,25 @@ GITLEAKS_ASSET_PATTERN = "linux_x64"
 # Временная директория для клонирования репозиториев
 CLONE_BASE = Path("/tmp/gitleaks_scan")
 
-# FP-фильтр для репозиториев — те же паттерны что в github_search.py
+# FP-фильтр для репозиториев
 _FP_REPO_RE = re.compile(
     r"(?i)"
+    # Списки доменов / исследовательские датасеты
     r"tranco|domain.?list|rank.?list|tld.?list|whois.?data"
     r"|crawl.?data|pii.?xel|piidb|privadb|randomwebsite"
     r"|web.?crawl|site.?mirror|domain.?scan|nextlist"
     r"|reviewnav.?handler|alexa.?top|majestic.?million"
-    r"|tracking.?pixel|tracking.?pixel|pixel.?track"
-    r"|top[\-_]?\d+k?|tranco|alexa|majestic|umbrella"
+    r"|tracking.?pixel|pixel.?track"
+    r"|top[\-_]?\d+k?|alexa|majestic|umbrella"
+    # SMS-бомберы, спам-инструменты, атак-утилиты
+    r"|sms.?bomb|sms.?attack|sms.?spam|sms.?flood|smsbom|smsham"
+    r"|maxwell.?spammer|spammer|b0mb3r|bomber|flooder|ddoser"
+    r"|rkr0k3|wit.?tools|telebotpy|iisus|spymer"
+    r"|apk.?anti|email.?bomb|tgsb"
+    # Списки истёкших доменов
+    r"|expired.?domain|domain.?names.?by.?day"
+    # Специфичные GitHub-аккаунты атакеров/спамеров
+    r"|antichristone|umutkara.?tools|imasender"
 )
 
 
