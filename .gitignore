@@ -11,3 +11,8 @@ build/
 venv/
 node_modules/
 .DS_Store
+
+# Снапшоты сессий (могут содержать токены)
+core/SESSION_SNAPSHOT.md
+*.session
+
