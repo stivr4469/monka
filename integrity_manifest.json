@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-05-26T20:46:22",
+  "created_at": "2026-05-26T21:14:49",
   "files": {
     "core/app/api/deps.py": {
       "functions": [
@@ -87,6 +87,7 @@
     },
     "core/app/api/v1/endpoints/attribution.py": {
       "functions": [
+        "auto_suggest_assets",
         "discover_attribution",
         "get_asn_prefixes"
       ],
@@ -95,10 +96,14 @@
         "AsnPrefixesResponse",
         "AttributionRequest",
         "AttributionResponse",
+        "AttributionSuggestion",
+        "AutoSuggestRequest",
+        "AutoSuggestResponse",
         "CidrInfo"
       ],
       "routes": [
         "GET /asn/{asn}",
+        "POST /auto-suggest",
         "POST /discover"
       ]
     },
@@ -365,6 +370,15 @@
       ],
       "routes": [
         "POST /human-osint"
+      ]
+    },
+    "core/app/api/v1/endpoints/identity_risk.py": {
+      "functions": [
+        "get_identity_exposure"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /identity/exposure"
       ]
     },
     "core/app/api/v1/endpoints/ingest.py": {
@@ -654,6 +668,17 @@
         "POST /telegram"
       ]
     },
+    "core/app/api/v1/endpoints/temptation.py": {
+      "functions": [
+        "get_asset_temptation",
+        "get_org_temptation"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /assets/{asset_id}/temptation",
+        "GET /organizations/{org_id}/temptation"
+      ]
+    },
     "core/app/api/v1/endpoints/tickets.py": {
       "functions": [
         "create_ticket",
@@ -927,6 +952,16 @@
       "classes": [],
       "routes": []
     },
+    "core/app/services/identity_risk.py": {
+      "functions": [
+        "compute_identity_risk"
+      ],
+      "classes": [
+        "IdentityEventSummary",
+        "IdentityRiskReport"
+      ],
+      "routes": []
+    },
     "core/app/services/opensearch_client.py": {
       "functions": [
         "create_ilm_policy",
@@ -955,6 +990,18 @@
       "classes": [
         "CategoryScore",
         "ScoreResult"
+      ],
+      "routes": []
+    },
+    "core/app/services/temptation_engine.py": {
+      "functions": [
+        "compute_asset_temptation",
+        "compute_org_temptation"
+      ],
+      "classes": [
+        "AssetTemptation",
+        "OrgTemptationReport",
+        "TemptationFactor"
       ],
       "routes": []
     },

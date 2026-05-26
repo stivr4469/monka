@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     graph,
     hardening_scan,
     human_osint_scan,
+    identity_risk,
     ingest,
     internal_alerts,
     mobile_scan,
@@ -43,6 +44,7 @@ from app.api.v1.endpoints import (
     takeover_scan,
     tech_scan,
     telegram_scan,
+    temptation,
     tickets,
     tls_scan,
     brand_scan,
@@ -162,4 +164,10 @@ api_router.include_router(attribution.router)
 
 # Data Quality / Zero-FP Rating (Gap 3 vs SecurityScorecard)
 api_router.include_router(data_quality.router)
+
+# Temptation Engine — Attacker's Perspective (Gap 4 vs Randori)
+api_router.include_router(temptation.router)
+
+# Identity Risk — MFA Bypass & Session Exposure (Gap 6 vs Recorded Future)
+api_router.include_router(identity_risk.router)
 
