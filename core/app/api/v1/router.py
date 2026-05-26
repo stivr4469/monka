@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     alerts,
     api_keys,
     assets,
+    attribution,
     auth,
     billing,
     breach,
@@ -14,6 +15,7 @@ from app.api.v1.endpoints import (
     ct_scan,
     dashboard,
     darknet_scan,
+    data_quality,
     enrich_scan,
     events,
     github_scan,
@@ -154,4 +156,10 @@ api_router.include_router(tickets.router, prefix="/events", tags=["tickets"])
 
 # Multi-org Industry Comparison — MSSP portfolio comparison (Phase 13.I)
 api_router.include_router(comparison.router, prefix="/comparison", tags=["comparison"])
+
+# Attribution Engine — компания → ASN → CIDR (Gap 1 vs SecurityScorecard)
+api_router.include_router(attribution.router)
+
+# Data Quality / Zero-FP Rating (Gap 3 vs SecurityScorecard)
+api_router.include_router(data_quality.router)
 

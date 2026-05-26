@@ -1,0 +1,1347 @@
+{
+  "created_at": "2026-05-26T20:46:22",
+  "files": {
+    "core/app/api/deps.py": {
+      "functions": [
+        "get_current_user",
+        "verify_internal_secret"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/api/v1/endpoints/ai_narrative.py": {
+      "functions": [
+        "generate_narrative"
+      ],
+      "classes": [
+        "NarrativeRequest",
+        "NarrativeResponse"
+      ],
+      "routes": [
+        "POST /narrative"
+      ]
+    },
+    "core/app/api/v1/endpoints/alerts.py": {
+      "functions": [
+        "create_alert_rule",
+        "delete_alert_rule",
+        "list_alert_rules",
+        "test_alert_rule",
+        "update_alert_rule"
+      ],
+      "classes": [],
+      "routes": [
+        "DELETE /{rule_id}",
+        "GET /",
+        "PATCH /{rule_id}",
+        "POST /",
+        "POST /test/{rule_id}"
+      ]
+    },
+    "core/app/api/v1/endpoints/api_keys.py": {
+      "functions": [
+        "create_api_key",
+        "list_api_keys",
+        "revoke_api_key"
+      ],
+      "classes": [
+        "ApiKeyCreateRequest",
+        "ApiKeyCreatedResponse",
+        "ApiKeyRead"
+      ],
+      "routes": [
+        "DELETE /{key_id}"
+      ]
+    },
+    "core/app/api/v1/endpoints/assets.py": {
+      "functions": [
+        "add_supply_chain_asset",
+        "create_asset",
+        "delete_asset",
+        "download_executive_report",
+        "download_technical_report",
+        "get_asset",
+        "get_asset_map",
+        "get_risk_score",
+        "list_assets",
+        "list_supply_chain_assets",
+        "update_asset"
+      ],
+      "classes": [
+        "RiskEventItem",
+        "RiskScoreResponse"
+      ],
+      "routes": [
+        "DELETE /{asset_id}",
+        "GET /",
+        "GET /{asset_id}",
+        "GET /{asset_id}/executive-report.pdf",
+        "GET /{asset_id}/map",
+        "GET /{asset_id}/report.pdf",
+        "GET /{asset_id}/risk-score",
+        "GET /{asset_id}/supply-chain",
+        "PATCH /{asset_id}",
+        "POST /",
+        "POST /{asset_id}/supply-chain"
+      ]
+    },
+    "core/app/api/v1/endpoints/attribution.py": {
+      "functions": [
+        "discover_attribution",
+        "get_asn_prefixes"
+      ],
+      "classes": [
+        "AsnInfo",
+        "AsnPrefixesResponse",
+        "AttributionRequest",
+        "AttributionResponse",
+        "CidrInfo"
+      ],
+      "routes": [
+        "GET /asn/{asn}",
+        "POST /discover"
+      ]
+    },
+    "core/app/api/v1/endpoints/auth.py": {
+      "functions": [
+        "dev_login",
+        "login_for_access_token"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /dev-login",
+        "POST /token"
+      ]
+    },
+    "core/app/api/v1/endpoints/bgp_scan.py": {
+      "functions": [
+        "trigger_bgp_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "BgpScanRequest",
+        "BgpScanResponse"
+      ],
+      "routes": [
+        "POST /bgp"
+      ]
+    },
+    "core/app/api/v1/endpoints/billing.py": {
+      "functions": [
+        "get_plan_info",
+        "update_plan"
+      ],
+      "classes": [
+        "PlanInfo",
+        "PlanUpdateRequest"
+      ],
+      "routes": [
+        "GET /plan",
+        "PUT /plan"
+      ]
+    },
+    "core/app/api/v1/endpoints/brand_scan.py": {
+      "functions": [
+        "domain_not_empty",
+        "normalize_keywords",
+        "trigger_brand_scan"
+      ],
+      "classes": [
+        "BrandScanRequest",
+        "BrandScanResponse"
+      ],
+      "routes": [
+        "POST /brand"
+      ]
+    },
+    "core/app/api/v1/endpoints/breach.py": {
+      "functions": [
+        "check_breach",
+        "discover_breach",
+        "domain_lowercase",
+        "emails_not_empty",
+        "get_breach_results"
+      ],
+      "classes": [
+        "BreachCheckRequest",
+        "BreachCheckResponse",
+        "BreachDiscoverRequest",
+        "BreachDiscoverResponse",
+        "BreachEventRead"
+      ],
+      "routes": [
+        "GET /results",
+        "POST /check",
+        "POST /discover"
+      ]
+    },
+    "core/app/api/v1/endpoints/censys_scan.py": {
+      "functions": [
+        "censys_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "CensysRequest",
+        "CensysResponse"
+      ],
+      "routes": [
+        "POST /censys"
+      ]
+    },
+    "core/app/api/v1/endpoints/comparison.py": {
+      "functions": [
+        "compare_orgs",
+        "compare_portfolio"
+      ],
+      "classes": [
+        "ComparisonResponse",
+        "ComparisonSummary",
+        "ComparisonSummaryBest",
+        "ComparisonSummaryWorst",
+        "OrgComparisonItem"
+      ],
+      "routes": [
+        "GET /orgs",
+        "GET /portfolio"
+      ]
+    },
+    "core/app/api/v1/endpoints/cookie_scan.py": {
+      "functions": [
+        "trigger_cookie_scan",
+        "validate_domain",
+        "validate_log_id"
+      ],
+      "classes": [
+        "CookieScanRequest",
+        "CookieScanResponse",
+        "CookieScanResultResponse"
+      ],
+      "routes": [
+        "POST /cookies"
+      ]
+    },
+    "core/app/api/v1/endpoints/ct_scan.py": {
+      "functions": [
+        "trigger_ct_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "CtScanRequest",
+        "CtScanResponse"
+      ],
+      "routes": [
+        "POST /ct"
+      ]
+    },
+    "core/app/api/v1/endpoints/darknet_scan.py": {
+      "functions": [
+        "trigger_darknet_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "DarknetScanRequest",
+        "DarknetScanResponse"
+      ],
+      "routes": [
+        "POST /darknet"
+      ]
+    },
+    "core/app/api/v1/endpoints/dashboard.py": {
+      "functions": [
+        "get_executive_dashboard",
+        "get_industry_benchmark_endpoint"
+      ],
+      "classes": [
+        "BenchmarkComparison",
+        "BenchmarkValues",
+        "CategoryBenchmarkItem",
+        "ExecutiveDashboard",
+        "IndustryBenchmarkResponse",
+        "OrganizationInfo",
+        "ScoreTrendPoint",
+        "TopRiskItem"
+      ],
+      "routes": [
+        "GET /benchmark",
+        "GET /executive"
+      ]
+    },
+    "core/app/api/v1/endpoints/data_quality.py": {
+      "functions": [
+        "get_asset_data_quality",
+        "get_org_data_quality"
+      ],
+      "classes": [
+        "OrgDataQualityReport"
+      ],
+      "routes": [
+        "GET /assets/{asset_id}/data-quality",
+        "GET /organizations/{org_id}/data-quality"
+      ]
+    },
+    "core/app/api/v1/endpoints/enrich_scan.py": {
+      "functions": [
+        "enrich_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "EnrichRequest",
+        "EnrichResponse"
+      ],
+      "routes": [
+        "POST /enrich"
+      ]
+    },
+    "core/app/api/v1/endpoints/events.py": {
+      "functions": [
+        "event_hints",
+        "event_stats",
+        "export_events",
+        "list_events",
+        "resolve_event",
+        "reveal_password",
+        "search_events"
+      ],
+      "classes": [
+        "EventListResponse",
+        "EventRead",
+        "EventStats",
+        "ResolveRequest"
+      ],
+      "routes": [
+        "GET /",
+        "GET /export",
+        "GET /search",
+        "GET /stats",
+        "GET /{event_id}/hints",
+        "PATCH /{event_id}/resolve",
+        "POST /{event_id}/reveal"
+      ]
+    },
+    "core/app/api/v1/endpoints/github_scan.py": {
+      "functions": [
+        "trigger_github_scan"
+      ],
+      "classes": [
+        "GitHubScanRequest",
+        "GitHubScanResponse"
+      ],
+      "routes": [
+        "POST /github"
+      ]
+    },
+    "core/app/api/v1/endpoints/graph.py": {
+      "functions": [
+        "get_attack_paths",
+        "get_graph_visualization"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /{domain}/attack-paths",
+        "GET /{domain}/visualization"
+      ]
+    },
+    "core/app/api/v1/endpoints/hardening_scan.py": {
+      "functions": [
+        "trigger_hardening_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "HardeningScanRequest",
+        "HardeningScanResponse"
+      ],
+      "routes": [
+        "POST /hardening"
+      ]
+    },
+    "core/app/api/v1/endpoints/human_osint_scan.py": {
+      "functions": [
+        "trigger_human_osint",
+        "validate_domain"
+      ],
+      "classes": [
+        "HumanOsintRequest",
+        "HumanOsintResponse"
+      ],
+      "routes": [
+        "POST /human-osint"
+      ]
+    },
+    "core/app/api/v1/endpoints/ingest.py": {
+      "functions": [
+        "bulk_ingest_events",
+        "ingest_event"
+      ],
+      "classes": [],
+      "routes": [
+        "POST /ingest",
+        "POST /ingest/bulk"
+      ]
+    },
+    "core/app/api/v1/endpoints/internal_alerts.py": {
+      "functions": [
+        "get_active_alert_rules"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /alert-rules"
+      ]
+    },
+    "core/app/api/v1/endpoints/masscan_scan.py": {
+      "functions": [
+        "scan_masscan",
+        "validate_domain"
+      ],
+      "classes": [
+        "MasscanRequest",
+        "MasscanResponse"
+      ],
+      "routes": [
+        "POST /masscan"
+      ]
+    },
+    "core/app/api/v1/endpoints/mobile_scan.py": {
+      "functions": [
+        "domain_not_empty",
+        "normalize_keywords",
+        "trigger_mobile_scan"
+      ],
+      "classes": [
+        "MobileScanRequest",
+        "MobileScanResponse"
+      ],
+      "routes": [
+        "POST /mobile"
+      ]
+    },
+    "core/app/api/v1/endpoints/mssp.py": {
+      "functions": [
+        "assign_client",
+        "get_mssp_client",
+        "list_mssp_clients",
+        "unassign_client"
+      ],
+      "classes": [
+        "AssignClientRequest",
+        "ClientRiskSummary"
+      ],
+      "routes": [
+        "GET /clients",
+        "GET /clients/{org_id}",
+        "POST /clients/{org_id}/assign",
+        "POST /clients/{org_id}/unassign"
+      ]
+    },
+    "core/app/api/v1/endpoints/notifications.py": {
+      "functions": [
+        "count_unread",
+        "event_generator",
+        "list_notifications",
+        "mark_all_read",
+        "mark_read",
+        "notifications_stream"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /count",
+        "GET /stream",
+        "POST /read-all",
+        "POST /{notif_id}/read"
+      ]
+    },
+    "core/app/api/v1/endpoints/paste_scan.py": {
+      "functions": [
+        "trigger_paste_scan"
+      ],
+      "classes": [
+        "PasteScanRequest",
+        "PasteScanResponse"
+      ],
+      "routes": [
+        "POST /paste"
+      ]
+    },
+    "core/app/api/v1/endpoints/phishing_scan.py": {
+      "functions": [
+        "trigger_phishing_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "PhishingScanRequest",
+        "PhishingScanResponse"
+      ],
+      "routes": [
+        "POST /phishing"
+      ]
+    },
+    "core/app/api/v1/endpoints/port_scan.py": {
+      "functions": [
+        "scan_ports",
+        "validate_domain"
+      ],
+      "classes": [
+        "PortScanRequest",
+        "PortScanResponse"
+      ],
+      "routes": [
+        "POST /ports"
+      ]
+    },
+    "core/app/api/v1/endpoints/quick_scan.py": {
+      "functions": [
+        "quick_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "QuickScanRequest",
+        "QuickScanResponse"
+      ],
+      "routes": [
+        "POST /quick"
+      ]
+    },
+    "core/app/api/v1/endpoints/reveal.py": {
+      "functions": [
+        "list_audit_logs",
+        "reveal_password"
+      ],
+      "classes": [
+        "AuditLogRead",
+        "RevealResponse"
+      ],
+      "routes": [
+        "GET /audit-logs",
+        "GET /events/{event_id}/reveal"
+      ]
+    },
+    "core/app/api/v1/endpoints/s3_scan.py": {
+      "functions": [
+        "trigger_s3_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "S3ScanRequest",
+        "S3ScanResponse"
+      ],
+      "routes": [
+        "POST /s3"
+      ]
+    },
+    "core/app/api/v1/endpoints/scheduled_scan.py": {
+      "functions": [
+        "create_schedule",
+        "deactivate_schedule",
+        "list_beat_schedules",
+        "list_schedules",
+        "trigger_manual_scan"
+      ],
+      "classes": [
+        "ManualScanResponse",
+        "ScheduleCreateRequest",
+        "ScheduleListResponse",
+        "ScheduleRead"
+      ],
+      "routes": [
+        "DELETE /{schedule_id}",
+        "GET /",
+        "GET /beat-schedules",
+        "POST /asset/{asset_id}",
+        "POST /create"
+      ]
+    },
+    "core/app/api/v1/endpoints/score.py": {
+      "functions": [
+        "get_asset_score",
+        "get_asset_score_history",
+        "get_org_score"
+      ],
+      "classes": [
+        "ScoreSnapshotRead"
+      ],
+      "routes": [
+        "GET /assets/{asset_id}/score",
+        "GET /assets/{asset_id}/score/history",
+        "GET /organizations/{org_id}/score"
+      ]
+    },
+    "core/app/api/v1/endpoints/stealer.py": {
+      "functions": [
+        "upload_stealer_log"
+      ],
+      "classes": [
+        "StealerUploadResponse"
+      ],
+      "routes": [
+        "POST /upload"
+      ]
+    },
+    "core/app/api/v1/endpoints/stealer_sources.py": {
+      "functions": [
+        "clean_channels",
+        "normalise_domain",
+        "run_stealer_sources"
+      ],
+      "classes": [
+        "StealerSourcesRequest"
+      ],
+      "routes": [
+        "POST /stealer-sources"
+      ]
+    },
+    "core/app/api/v1/endpoints/stix_export.py": {
+      "functions": [
+        "export_stix",
+        "export_stix_download"
+      ],
+      "classes": [],
+      "routes": [
+        "GET /stix",
+        "GET /stix/bundle.json"
+      ]
+    },
+    "core/app/api/v1/endpoints/subfinder_scan.py": {
+      "functions": [
+        "trigger_subfinder",
+        "validate_domain"
+      ],
+      "classes": [
+        "SubfinderRequest",
+        "SubfinderResponse"
+      ],
+      "routes": [
+        "POST /subfinder"
+      ]
+    },
+    "core/app/api/v1/endpoints/takeover_scan.py": {
+      "functions": [
+        "trigger_takeover_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "TakeoverScanRequest",
+        "TakeoverScanResponse"
+      ],
+      "routes": [
+        "POST /takeover"
+      ]
+    },
+    "core/app/api/v1/endpoints/tech_scan.py": {
+      "functions": [
+        "trigger_tech_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "EolItem",
+        "TechDetected",
+        "TechScanRequest",
+        "TechScanResponse"
+      ],
+      "routes": [
+        "POST /tech-profile"
+      ]
+    },
+    "core/app/api/v1/endpoints/telegram_scan.py": {
+      "functions": [
+        "domain_not_empty",
+        "normalize_channels",
+        "trigger_telegram_scan"
+      ],
+      "classes": [
+        "TelegramScanRequest",
+        "TelegramScanResponse"
+      ],
+      "routes": [
+        "POST /telegram"
+      ]
+    },
+    "core/app/api/v1/endpoints/tickets.py": {
+      "functions": [
+        "create_ticket",
+        "create_ticket_for_event",
+        "get_ticket_status"
+      ],
+      "classes": [
+        "TicketResponse"
+      ],
+      "routes": [
+        "GET /{event_id}/ticket",
+        "POST /{event_id}/ticket"
+      ]
+    },
+    "core/app/api/v1/endpoints/tls_scan.py": {
+      "functions": [
+        "trigger_tls_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "TlsScanRequest",
+        "TlsScanResponse"
+      ],
+      "routes": [
+        "POST /tls"
+      ]
+    },
+    "core/app/api/v1/endpoints/whois_scan.py": {
+      "functions": [
+        "trigger_whois_scan",
+        "validate_domain"
+      ],
+      "classes": [
+        "WhoisScanRequest",
+        "WhoisScanResponse"
+      ],
+      "routes": [
+        "POST /whois"
+      ]
+    },
+    "core/app/core/config.py": {
+      "functions": [
+        "get_settings",
+        "validate_secrets"
+      ],
+      "classes": [
+        "Settings",
+        "_SettingsProxy"
+      ],
+      "routes": []
+    },
+    "core/app/core/crypto.py": {
+      "functions": [
+        "decrypt_password",
+        "encrypt_password"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/core/rate_limit.py": {
+      "functions": [],
+      "classes": [],
+      "routes": [
+        "POST /token"
+      ]
+    },
+    "core/app/core/security.py": {
+      "functions": [
+        "create_access_token",
+        "decode_access_token",
+        "hash_password",
+        "verify_password"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/db.py": {
+      "functions": [
+        "get_db"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/main.py": {
+      "functions": [
+        "health",
+        "lifespan"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/middleware/logging_middleware.py": {
+      "functions": [
+        "dispatch"
+      ],
+      "classes": [
+        "LoggingMiddleware"
+      ],
+      "routes": []
+    },
+    "core/app/models/alert_rule.py": {
+      "functions": [
+        "matches_event"
+      ],
+      "classes": [
+        "AlertRule"
+      ],
+      "routes": []
+    },
+    "core/app/models/api_key.py": {
+      "functions": [],
+      "classes": [
+        "ApiKey"
+      ],
+      "routes": []
+    },
+    "core/app/models/asset.py": {
+      "functions": [],
+      "classes": [
+        "Asset"
+      ],
+      "routes": []
+    },
+    "core/app/models/audit_log.py": {
+      "functions": [],
+      "classes": [
+        "AuditLog"
+      ],
+      "routes": []
+    },
+    "core/app/models/base.py": {
+      "functions": [
+        "new_uuid"
+      ],
+      "classes": [
+        "Base",
+        "TimestampMixin"
+      ],
+      "routes": []
+    },
+    "core/app/models/event.py": {
+      "functions": [],
+      "classes": [
+        "Event"
+      ],
+      "routes": []
+    },
+    "core/app/models/notification.py": {
+      "functions": [],
+      "classes": [
+        "Notification"
+      ],
+      "routes": []
+    },
+    "core/app/models/organization.py": {
+      "functions": [],
+      "classes": [
+        "OrgPlan",
+        "Organization"
+      ],
+      "routes": []
+    },
+    "core/app/models/scan_schedule.py": {
+      "functions": [],
+      "classes": [
+        "ScanFrequency",
+        "ScanSchedule"
+      ],
+      "routes": []
+    },
+    "core/app/models/score_snapshot.py": {
+      "functions": [],
+      "classes": [
+        "ScoreSnapshot"
+      ],
+      "routes": []
+    },
+    "core/app/models/user.py": {
+      "functions": [],
+      "classes": [
+        "User"
+      ],
+      "routes": []
+    },
+    "core/app/scanner.py": {
+      "functions": [
+        "run_nuclei",
+        "run_subfinder"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/schemas/alert_rule.py": {
+      "functions": [
+        "normalize_domain",
+        "validate_chat_id",
+        "validate_event_types"
+      ],
+      "classes": [
+        "AlertRuleCreate",
+        "AlertRuleRead",
+        "AlertRuleUpdate"
+      ],
+      "routes": []
+    },
+    "core/app/schemas/asset.py": {
+      "functions": [
+        "validate_asset_type",
+        "validate_domain"
+      ],
+      "classes": [
+        "AssetCreate",
+        "AssetRead",
+        "AssetUpdate",
+        "SupplyChainCreate"
+      ],
+      "routes": []
+    },
+    "core/app/schemas/normalized_event.py": {
+      "functions": [
+        "compute_dedup_hash"
+      ],
+      "classes": [
+        "BulkIngestRequest",
+        "EventType",
+        "NormalizedEvent",
+        "Severity",
+        "SourceType"
+      ],
+      "routes": []
+    },
+    "core/app/schemas/user.py": {
+      "functions": [],
+      "classes": [
+        "Token",
+        "TokenPayload",
+        "UserCreate",
+        "UserRead"
+      ],
+      "routes": []
+    },
+    "core/app/services/benchmarking.py": {
+      "functions": [
+        "compare_with_benchmark",
+        "get_industry_benchmark"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/services/data_quality.py": {
+      "functions": [
+        "accumulate_scan_quality",
+        "build_quality_report",
+        "load_quality_log",
+        "save_quality_log"
+      ],
+      "classes": [
+        "DataQualityReport",
+        "ScanQualitySource"
+      ],
+      "routes": []
+    },
+    "core/app/services/graph_client.py": {
+      "functions": [
+        "close_driver",
+        "ensure_constraints",
+        "find_attack_paths",
+        "get_domain_graph",
+        "upsert_event_to_graph"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/services/opensearch_client.py": {
+      "functions": [
+        "create_ilm_policy",
+        "ensure_index_exists",
+        "ensure_leaked_creds_index",
+        "get_opensearch",
+        "index_event",
+        "index_leaked_credential",
+        "search_events"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/services/report_generator.py": {
+      "functions": [
+        "generate_executive_report",
+        "generate_technical_report"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/services/score_engine.py": {
+      "functions": [
+        "calculate_score"
+      ],
+      "classes": [
+        "CategoryScore",
+        "ScoreResult"
+      ],
+      "routes": []
+    },
+    "core/app/services/webhook.py": {
+      "functions": [
+        "notify_critical_event"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "core/app/workers_client.py": {
+      "functions": [
+        "ensure_workers_path",
+        "get_executor"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/ai_narrative.py": {
+      "functions": [
+        "generate_risk_narrative"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/attribution_engine.py": {
+      "functions": [
+        "get_asn_info",
+        "get_asn_prefixes",
+        "lookup_asn_by_domain",
+        "run_attribution",
+        "search_asn_by_org"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/base.py": {
+      "functions": [
+        "duplicate_count",
+        "error_count",
+        "get_metrics",
+        "ingest",
+        "is_open",
+        "record_failure",
+        "record_success",
+        "reset",
+        "reset_circuit",
+        "run_tool",
+        "send",
+        "send_event",
+        "sent_count"
+      ],
+      "classes": [
+        "BaseWorker",
+        "IngestClient",
+        "_CircuitBreakerState"
+      ],
+      "routes": []
+    },
+    "workers/tasks/beaconing_detector.py": {
+      "functions": [
+        "run_beaconing_detection"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/bgp_monitor.py": {
+      "functions": [
+        "check_bgp",
+        "get_ip_info",
+        "load_baseline",
+        "resolve_ips",
+        "save_baseline"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/brand_monitor.py": {
+      "functions": [
+        "is_negative_mention",
+        "monitor_brand",
+        "monitor_brand_task",
+        "search_hackernews",
+        "search_reddit"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/breach_checker.py": {
+      "functions": [
+        "check_domain_emails",
+        "check_email_hibp",
+        "check_email_leakcheck",
+        "discover_and_check",
+        "to_dict"
+      ],
+      "classes": [
+        "CheckStats"
+      ],
+      "routes": []
+    },
+    "workers/tasks/bulk_ingest.py": {
+      "functions": [
+        "bulk_ingest"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/censys_enricher.py": {
+      "functions": [
+        "enrich_domain_with_censys",
+        "get_censys_host",
+        "search_censys_hosts"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/cookie_validator.py": {
+      "functions": [
+        "validate_cookies_from_zip"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/ct_monitor.py": {
+      "functions": [
+        "check_ct",
+        "extract_domain_part",
+        "fetch_ct_certs",
+        "is_suspicious",
+        "levenshtein_distance",
+        "load_seen_ids",
+        "save_seen_ids"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/darknet_monitor.py": {
+      "functions": [
+        "check_ransomwatch",
+        "monitor_darknet",
+        "monitor_darknet_task",
+        "search_ahmia",
+        "search_darksearch"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/domain_hardening.py": {
+      "functions": [
+        "run_domain_hardening"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/github_search.py": {
+      "functions": [
+        "search_github",
+        "search_github_task"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/gitleaks.py": {
+      "functions": [
+        "install_gitleaks",
+        "scan_github_repo",
+        "scan_github_results"
+      ],
+      "classes": [
+        "_CloneError"
+      ],
+      "routes": []
+    },
+    "workers/tasks/human_osint.py": {
+      "functions": [
+        "run_human_osint"
+      ],
+      "classes": [
+        "GitHubProfile",
+        "LinkedInProfile"
+      ],
+      "routes": []
+    },
+    "workers/tasks/intelx_api.py": {
+      "functions": [
+        "search_intelx"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/masscan_scanner.py": {
+      "functions": [
+        "fingerprint_with_nmap",
+        "resolve_ips",
+        "run_masscan",
+        "scan_domain"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/mobile_monitor.py": {
+      "functions": [
+        "is_suspicious_app",
+        "monitor_mobile_apps",
+        "monitor_mobile_apps_task",
+        "search_app_store",
+        "search_google_play"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/nuclei.py": {
+      "functions": [
+        "scan_all_active_targets",
+        "scan_target"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/paste_monitor.py": {
+      "functions": [
+        "monitor_pastes",
+        "scan_pastebin",
+        "scan_pastee"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/phishing_detector.py": {
+      "functions": [
+        "detect_phishing_domains"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/port_scanner.py": {
+      "functions": [
+        "run_port_scan",
+        "run_port_scan_all_assets"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/ransomware_sites.py": {
+      "functions": [
+        "monitor_ransomware_sites",
+        "parse_ransomware_site",
+        "run_darknet_monitor_all_assets"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/remediation_hints.py": {
+      "functions": [
+        "enrich_event_with_hints",
+        "get_hints"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/s3_scanner.py": {
+      "functions": [
+        "run_s3_scan"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/shodan_enricher.py": {
+      "functions": [
+        "run_shodan_enrichment"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/stealer_parser.py": {
+      "functions": [
+        "parse_stealer_log"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/stealer_sources.py": {
+      "functions": [
+        "query_stealer_sources"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/stealer_tg_channels.py": {
+      "functions": [
+        "scan_tg_stealer_channels"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/stix_export.py": {
+      "functions": [
+        "bundle_to_json",
+        "event_to_indicator",
+        "event_to_observed_data",
+        "event_to_threat_actor",
+        "event_to_vulnerability",
+        "events_to_stix_bundle"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/subfinder.py": {
+      "functions": [
+        "check_asset_drift",
+        "fetch_crt_sh",
+        "run_subfinder_standalone",
+        "scan_domain",
+        "scan_domain_all_active"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/takeover_detector.py": {
+      "functions": [
+        "scan_takeover"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/tech_profiler.py": {
+      "functions": [
+        "run_tech_profiler",
+        "run_tech_profiler_all_assets"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/telegram_alerts.py": {
+      "functions": [
+        "dispatch_alerts",
+        "send_telegram_alert"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/telegram_monitor.py": {
+      "functions": [
+        "fetch_channel_posts",
+        "monitor_brand_telegram",
+        "monitor_telegram_channels",
+        "monitor_telegram_task",
+        "run_telegram_monitor_all_assets",
+        "scan_channel"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/ticketing.py": {
+      "functions": [
+        "create_jira_ticket",
+        "create_snow_incident",
+        "create_ticket_for_event"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/tls_fingerprinter.py": {
+      "functions": [
+        "run_tls_scan"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/tor_client.py": {
+      "functions": [
+        "check_tor_available",
+        "get_tor_client"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/whois_monitor.py": {
+      "functions": [
+        "check_whois",
+        "fetch_whois_rdap",
+        "load_baseline",
+        "save_baseline"
+      ],
+      "classes": [],
+      "routes": []
+    }
+  }
+}

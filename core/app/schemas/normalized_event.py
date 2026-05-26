@@ -34,6 +34,7 @@ class EventType(str, Enum):
     TLS_EXPIRY = "tls_expiry"
     OPEN_S3_BUCKET = "open_s3_bucket"
     GITHUB_SECRET_LEAK = "github_secret_leak"
+    MALWARE_BEACONING = "malware_beaconing"
 
 
 class Severity(str, Enum):

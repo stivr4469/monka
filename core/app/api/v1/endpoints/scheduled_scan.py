@@ -96,7 +96,7 @@ def _run_full_scan_background(domain: str, port: int) -> None:
     """
     Полное сканирование актива — все доступные модули:
       TLS → Hardening → Tech Profile → Phishing → Port Scan →
-      Darknet → Paste → GitHub → Gitleaks → Subfinder → S3 → Takeover
+      Darknet → Paste → GitHub → Gitleaks → Subfinder → S3 → Takeover → Beaconing
 
     Каждый модуль изолирован: падение одного не прерывает остальные.
     Результаты поступают через /api/v1/internal/ingest в БД и OpenSearch.
@@ -104,10 +104,28 @@ def _run_full_scan_background(domain: str, port: int) -> None:
     core_api_url = f"http://127.0.0.1:{port}"
     sec = settings.INTERNAL_API_SECRET
 
+    # Накопление FP-статистики для Data Quality Report
+    _quality_sources: list[dict] = []
+
     def _run(name: str, fn, *args, **kwargs):
         try:
-            fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
             logger.info("[full_scan] ✓ %s завершён для %s", name, domain)
+            # Собираем FP-метрики если модуль их возвращает
+            if isinstance(result, dict) and "fp_filtered" in result:
+                raw = result.get("repos_scanned", 0) + result.get("found", 0) + result.get("fp_filtered", 0)
+                _quality_sources.append({
+                    "source":      name,
+                    "raw":         raw,
+                    "fp_filtered": result["fp_filtered"],
+                })
+            elif isinstance(result, dict) and "filtered" in result:
+                raw = result.get("found", 0) + result.get("filtered", 0)
+                _quality_sources.append({
+                    "source":      name,
+                    "raw":         raw,
+                    "fp_filtered": result["filtered"],
+                })
         except ImportError:
             logger.warning("[full_scan] %s воркер недоступен (ImportError)", name)
         except Exception as exc:
@@ -206,6 +224,23 @@ def _run_full_scan_background(domain: str, port: int) -> None:
         from tasks.telegram_monitor import monitor_telegram_channels
         monitor_telegram_channels(domain=domain, core_api_url=core_api_url, internal_secret=sec)
     _run("telegram_monitor", _telegram)
+
+    # 14. Beaconing Detector — проверка IP по фидам Feodo/URLhaus/ThreatFox
+    def _beaconing():
+        from tasks.beaconing_detector import run_beaconing_detection
+        run_beaconing_detection(
+            domain=domain,
+            core_api_url=core_api_url,
+            internal_secret=sec,
+        )
+    _run("beaconing_detector", _beaconing)
+
+    # 15. Data Quality Report — сохраняем Zero-FP статистику скана
+    try:
+        from app.services.data_quality import accumulate_scan_quality
+        accumulate_scan_quality(domain=domain, sources=_quality_sources)
+    except Exception as exc:
+        logger.warning("[full_scan] Data quality log не сохранён: %s", exc)
 
     logger.info("[full_scan] ✅ Полное сканирование завершено для %s", domain)
 

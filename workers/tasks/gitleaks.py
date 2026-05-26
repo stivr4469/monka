@@ -482,13 +482,16 @@ def scan_github_results(
         return {"repos_scanned": 0, "total_secrets": 0, "sent": 0, "error": "gitleaks not available"}
 
     # Собираем уникальные репозитории через GitHub Search
-    repo_urls: set[str] = _collect_repos_from_search(domain, github_token)
+    repo_urls, fp_filtered = _collect_repos_from_search(domain, github_token)
 
     if not repo_urls:
         logger.info("Не найдено репозиториев для домена %s", domain)
-        return {"repos_scanned": 0, "total_secrets": 0, "sent": 0}
+        return {"repos_scanned": 0, "total_secrets": 0, "sent": 0, "fp_filtered": fp_filtered}
 
-    logger.info("Найдено %d уникальных репозиториев для %s", len(repo_urls), domain)
+    logger.info(
+        "Найдено %d уникальных репозиториев для %s (отфильтровано FP: %d)",
+        len(repo_urls), domain, fp_filtered,
+    )
 
     repos_scanned = 0
     total_secrets = 0
@@ -507,23 +510,21 @@ def scan_github_results(
         total_sent += result.get("sent", 0)
 
     logger.info(
-        "gitleaks scan_github_results: domain=%s repos=%d secrets=%d sent=%d",
-        domain,
-        repos_scanned,
-        total_secrets,
-        total_sent,
+        "gitleaks scan_github_results: domain=%s repos=%d secrets=%d sent=%d fp_filtered=%d",
+        domain, repos_scanned, total_secrets, total_sent, fp_filtered,
     )
     return {
         "repos_scanned": repos_scanned,
         "total_secrets": total_secrets,
-        "sent": total_sent,
+        "sent":          total_sent,
+        "fp_filtered":   fp_filtered,
     }
 
 
-def _collect_repos_from_search(domain: str, github_token: str) -> set[str]:
+def _collect_repos_from_search(domain: str, github_token: str) -> tuple[set[str], int]:
     """
     Использует GitHub Search API для поиска репозиториев упоминающих домен.
-    Возвращает множество HTML-URL репозиториев.
+    Возвращает (множество HTML-URL репозиториев, количество отфильтрованных FP).
     """
     headers: dict[str, str] = {
         "Accept": "application/vnd.github+json",
@@ -533,6 +534,7 @@ def _collect_repos_from_search(domain: str, github_token: str) -> set[str]:
         headers["Authorization"] = f"Bearer {github_token}"
 
     repo_urls: set[str] = set()
+    fp_filtered = 0
 
     for query_tpl in GITHUB_SEARCH_QUERIES:
         query = query_tpl.format(domain=domain)
@@ -556,6 +558,7 @@ def _collect_repos_from_search(domain: str, github_token: str) -> set[str]:
                 if repo_html_url and not _is_fp_repo(repo_html_url):
                     repo_urls.add(repo_html_url)
                 elif repo_html_url:
+                    fp_filtered += 1
                     logger.debug("[gitleaks] FP репозиторий пропущен: %s", repo_html_url)
 
         except Exception as exc:
@@ -564,7 +567,7 @@ def _collect_repos_from_search(domain: str, github_token: str) -> set[str]:
         # Пауза чтобы не попасть в rate limit GitHub Search
         time.sleep(7.0)
 
-    return repo_urls
+    return repo_urls, fp_filtered
 
 
 # ─── Celery-задача ────────────────────────────────────────────────────────────
