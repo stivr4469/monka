@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-05-26T21:14:49",
+  "created_at": "2026-05-26T21:22:51",
   "files": {
     "core/app/api/deps.py": {
       "functions": [
@@ -1119,6 +1119,15 @@
       "classes": [],
       "routes": []
     },
+    "workers/tasks/certstream_monitor.py": {
+      "functions": [
+        "callback",
+        "run_daemon",
+        "scan_ct_live"
+      ],
+      "classes": [],
+      "routes": []
+    },
     "workers/tasks/cookie_validator.py": {
       "functions": [
         "validate_cookies_from_zip"
@@ -1157,6 +1166,14 @@
       "classes": [],
       "routes": []
     },
+    "workers/tasks/dumpster_diver.py": {
+      "functions": [
+        "analyze_file",
+        "analyze_js_files"
+      ],
+      "classes": [],
+      "routes": []
+    },
     "workers/tasks/github_search.py": {
       "functions": [
         "search_github",
@@ -1176,6 +1193,22 @@
       ],
       "routes": []
     },
+    "workers/tasks/gowitness_scanner.py": {
+      "functions": [
+        "screenshot_domains",
+        "screenshot_single"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/holehe_scanner.py": {
+      "functions": [
+        "check_domain_emails",
+        "check_email"
+      ],
+      "classes": [],
+      "routes": []
+    },
     "workers/tasks/human_osint.py": {
       "functions": [
         "run_human_osint"
@@ -1189,6 +1222,14 @@
     "workers/tasks/intelx_api.py": {
       "functions": [
         "search_intelx"
+      ],
+      "classes": [],
+      "routes": []
+    },
+    "workers/tasks/katana_crawler.py": {
+      "functions": [
+        "crawl_and_scan",
+        "crawl_target"
       ],
       "classes": [],
       "routes": []
