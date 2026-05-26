@@ -169,8 +169,8 @@ def check_email(self, email: str, target_domain: str) -> dict[str, Any]:
         return {"status": "ok", "services_found": 0, "high_risk": 0}
 
     client = IngestClient(
-        core_api_url=settings.core_api_url,
-        internal_secret=settings.internal_api_secret,
+        core_api_url=settings.CORE_API_URL,
+        internal_secret=settings.INTERNAL_API_SECRET,
     )
 
     high_risk = 0

@@ -153,8 +153,8 @@ def crawl_target(self, url: str, target_domain: str) -> dict[str, Any]:
 
     # Отправляем события для API-эндпоинтов
     client = IngestClient(
-        core_api_url=settings.core_api_url,
-        internal_secret=settings.internal_api_secret,
+        core_api_url=settings.CORE_API_URL,
+        internal_secret=settings.INTERNAL_API_SECRET,
     )
     sent = 0
     for found_url in interesting[:50]:   # лимит событий

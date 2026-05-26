@@ -30,6 +30,21 @@ _GOWITNESS_TIMEOUT = 120    # секунды на один batch
 _GOWITNESS_THREADS = 10     # параллельных запросов
 _GOWITNESS_BINARY = "gowitness"
 
+# Кандидаты пути к Chrome/Chromium (gowitness v3 требует явного указания)
+_CHROME_CANDIDATES = [
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+]
+
+
+def _find_chrome() -> str | None:
+    for p in _CHROME_CANDIDATES:
+        if Path(p).exists():
+            return p
+    return shutil.which("google-chrome") or shutil.which("chromium")
+
 
 def _find_gowitness() -> str | None:
     """Ищет бинарь gowitness в PATH и ~/go/bin."""
@@ -97,28 +112,31 @@ def screenshot_domains(self, urls: list[str], target_domain: str) -> dict[str, A
 
     db_file = str(out_dir / "gowitness.sqlite3")
 
+    chrome_path = _find_chrome()
+    cmd = [
+        binary,
+        "scan", "file",
+        "--file", url_file,
+        "--screenshot-path", str(out_dir),
+        "--write-db",
+        "--write-db-uri", f"sqlite://{db_file}",
+        "--threads", str(_GOWITNESS_THREADS),
+        "-T", "15",
+        "-q",
+    ]
+    if chrome_path:
+        cmd += ["--chrome-path", chrome_path]
+
     try:
-        stdout, stderr = run_tool(
-            [
-                binary,
-                "scan", "file",
-                "--file", url_file,
-                "--screenshot-path", str(out_dir),
-                "--db-path", db_file,
-                "--threads", str(_GOWITNESS_THREADS),
-                "--timeout", "15",
-                "--disable-logging",
-            ],
-            timeout=_GOWITNESS_TIMEOUT,
-        )
+        stdout, stderr = run_tool(cmd, timeout=_GOWITNESS_TIMEOUT)
     except RuntimeError as exc:
         logger.error("[gowitness] Ошибка запуска: %s", exc)
         return {"status": "error", "error": str(exc), "screenshots_taken": 0, "failed": len(urls)}
     finally:
         Path(url_file).unlink(missing_ok=True)
 
-    # Считаем созданные скриншоты
-    screenshots = list(out_dir.glob("*.png"))
+    # gowitness v3 сохраняет как .jpeg по умолчанию
+    screenshots = list(out_dir.glob("*.jpeg")) + list(out_dir.glob("*.png"))
     taken = len(screenshots)
     failed = max(0, len(urls) - taken)
 
@@ -126,8 +144,8 @@ def screenshot_domains(self, urls: list[str], target_domain: str) -> dict[str, A
 
     # Отправляем события в ingest
     client = IngestClient(
-        core_api_url=settings.core_api_url,
-        internal_secret=settings.internal_api_secret,
+        core_api_url=settings.CORE_API_URL,
+        internal_secret=settings.INTERNAL_API_SECRET,
     )
     sent = 0
     for url, png in zip(urls, screenshots):
@@ -149,4 +167,4 @@ def screenshot_domains(self, urls: list[str], target_domain: str) -> dict[str, A
 @app.task(bind=True, name="gowitness_scanner.screenshot_single", max_retries=1)
 def screenshot_single(self, url: str, target_domain: str) -> dict[str, Any]:
     """Скриншот одного URL — для быстрых spot-checks."""
-    return screenshot_domains.run([url], target_domain)
+    return screenshot_domains([url], target_domain)

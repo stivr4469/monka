@@ -205,8 +205,8 @@ def analyze_file(self, file_path: str, target_domain: str) -> dict[str, Any]:
 
     # Отправляем в ingest
     client = IngestClient(
-        core_api_url=settings.core_api_url,
-        internal_secret=settings.internal_api_secret,
+        core_api_url=settings.CORE_API_URL,
+        internal_secret=settings.INTERNAL_API_SECRET,
     )
     sent = 0
     critical = sum(1 for f in findings if f.get("entropy", 0) >= 6.0)

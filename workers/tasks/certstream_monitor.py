@@ -129,8 +129,8 @@ def scan_ct_live(self, domain: str) -> dict[str, Any]:
 
     # Отправка в ingest батчами
     client = IngestClient(
-        core_api_url=settings.core_api_url,
-        internal_secret=settings.internal_api_secret,
+        core_api_url=settings.CORE_API_URL,
+        internal_secret=settings.INTERNAL_API_SECRET,
     )
     sent = 0
     for ev in unique_events:
@@ -159,8 +159,8 @@ def run_daemon(monitored_domains: list[str]) -> None:
     import certstream  # noqa: PLC0415
 
     client = IngestClient(
-        core_api_url=settings.core_api_url,
-        internal_secret=settings.internal_api_secret,
+        core_api_url=settings.CORE_API_URL,
+        internal_secret=settings.INTERNAL_API_SECRET,
     )
 
     def callback(message: dict, context: Any) -> None:
