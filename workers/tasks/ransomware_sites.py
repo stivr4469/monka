@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from tasks.tor_client import check_tor_available, get_tor_client
+from workers.tasks.tor_client import check_tor_available, get_tor_client
 
 logger = logging.getLogger(__name__)
 

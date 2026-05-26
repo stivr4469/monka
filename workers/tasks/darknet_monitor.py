@@ -30,7 +30,7 @@ from typing import Any
 
 import httpx
 
-from tasks.bulk_ingest import bulk_ingest
+from workers.tasks.bulk_ingest import bulk_ingest
 
 # Новые источники мониторинга — импорт опциональный (graceful degradation)
 try:

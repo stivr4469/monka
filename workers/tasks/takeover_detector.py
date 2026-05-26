@@ -14,7 +14,7 @@ from typing import NamedTuple
 import dns.resolver
 import httpx
 
-from tasks.bulk_ingest import bulk_ingest
+from workers.tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,13 @@
+import shutil
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_GO_BIN = str(Path.home() / "go" / "bin")
+
+
+def _find(name: str, fallback: str) -> str:
+    """Ищет бинарь в PATH и ~/go/bin, иначе возвращает fallback."""
+    return shutil.which(name) or shutil.which(name, path=_GO_BIN) or fallback
 
 
 class WorkerSettings(BaseSettings):
@@ -12,10 +21,10 @@ class WorkerSettings(BaseSettings):
     # GitHub токен для поиска утечек
     GITHUB_TOKEN: str = ""
 
-    # Путь к бинарникам инструментов внутри контейнера
-    SUBFINDER_BIN: str = "/usr/local/bin/subfinder"
-    NUCLEI_BIN: str = "/usr/local/bin/nuclei"
-    GITLEAKS_BIN: str = "/usr/local/bin/gitleaks"
+    # Путь к бинарникам — автодетект из PATH и ~/go/bin
+    SUBFINDER_BIN: str = _find("subfinder", "/usr/local/bin/subfinder")
+    NUCLEI_BIN: str = _find("nuclei",    "/usr/local/bin/nuclei")
+    GITLEAKS_BIN: str = _find("gitleaks", "/usr/local/bin/gitleaks")
 
     # Прокси для cookie_validator (comma-separated, опционально)
     # Формат: http://user:pass@host:port,http://user:pass@host2:port

@@ -25,8 +25,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from crypto import encrypt_password
-from tasks.bulk_ingest import bulk_ingest
-from tasks.cookie_validator import validate_cookies_from_zip
+from workers.tasks.bulk_ingest import bulk_ingest
+from workers.tasks.cookie_validator import validate_cookies_from_zip
 
 logger = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from typing import Any
 
-from tasks.bulk_ingest import bulk_ingest
+from workers.tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
 
