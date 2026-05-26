@@ -39,7 +39,7 @@ async def login_for_access_token(
 
 
 @router.get("/dev-login", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit("60/minute")
 async def dev_login(request: Request, db: Annotated[AsyncSession, Depends(get_db)]) -> Token:
     """
     Беспарольный вход для режима разработки.

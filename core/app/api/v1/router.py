@@ -50,6 +50,7 @@ from app.api.v1.endpoints import (
     brand_scan,
     whois_scan,
     bgp_scan,
+    workers_health,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -170,4 +171,7 @@ api_router.include_router(temptation.router)
 
 # Identity Risk — MFA Bypass & Session Exposure (Gap 6 vs Recorded Future)
 api_router.include_router(identity_risk.router)
+
+# Workers Health Dashboard — статус всех воркеров в реальном времени
+api_router.include_router(workers_health.router)
 
