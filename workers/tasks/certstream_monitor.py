@@ -2,22 +2,24 @@
 CertStream Monitor — реалтайм Certificate Transparency вместо медленного crt.sh.
 
 Два режима работы:
-  1. Celery-задача scan_ct_live() — слушает WebSocket окно N секунд, собирает
-     новые поддомены и отправляет в ingest pipeline.
-  2. Daemon-режим run_daemon() — бесконечный listener для запуска как отдельный процесс
-     (supervisord / systemd).
+  1. Celery-задача scan_ct_live() — слушает WebSocket certstream.calidog.io N секунд,
+     при недоступности — fallback на Google CT logs API (всегда доступен).
+  2. Daemon-режим run_daemon() — бесконечный listener для supervisord/systemd.
 
 Зависимость: pip install certstream
-Fallback: если пакет не установлен, задача завершается с предупреждением.
+Fallback: Google CT logs API — бесплатный, без ключей, всегда работает.
 """
 from __future__ import annotations
 
+import base64
+import json
 import logging
-import shutil
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 
 from workers.celery_app import app
 from workers.config import settings
@@ -27,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 _LISTEN_WINDOW_SEC = 60       # сколько секунд слушаем в Celery-задаче
 _INGEST_BATCH_SIZE = 50       # отправляем событиями батчами
+
+# Google CT Log — Argon (один из крупнейших публичных логов)
+_CT_LOG_URL  = "https://ct.googleapis.com/logs/us1/argon2024"
+_CT_TIMEOUT  = httpx.Timeout(15.0)
 
 
 def _check_certstream() -> bool:
@@ -97,11 +103,180 @@ def _listen_window(
     return collected
 
 
+# ─── Google CT logs API fallback ──────────────────────────────────────────────
+
+def _ct_get_tree_size() -> int:
+    """Возвращает текущий размер дерева CT-лога (количество сертификатов)."""
+    resp = httpx.get(f"{_CT_LOG_URL}/ct/v1/get-sth", timeout=_CT_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()["tree_size"]
+
+
+def _parse_cert_domains(leaf_bytes: bytes) -> list[str]:
+    """
+    Разбирает MerkleTreeLeaf (RFC 6962) и возвращает все домены из сертификата.
+    Структура leaf_input:
+      1b version + 1b leaf_type + 8b timestamp + 2b entry_type + 3b cert_len + DER
+    """
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa
+    except ImportError:
+        return []
+
+    # Пропускаем header MerkleTreeLeaf (15 байт) и читаем длину сертификата
+    if len(leaf_bytes) < 15:
+        return []
+    entry_type = int.from_bytes(leaf_bytes[10:12], "big")
+    cert_len = int.from_bytes(leaf_bytes[12:15], "big")
+    cert_der = leaf_bytes[15:15 + cert_len]
+    if not cert_der:
+        return []
+
+    try:
+        if entry_type == 1:
+            # PreCert: leaf содержит TBSCertificate (не полный сертификат)
+            # Просто ищем домены в raw-байтах через regex
+            import re
+            text = cert_der.decode("latin-1", errors="replace")
+            return list({
+                m.lower().lstrip("*.")
+                for m in re.findall(r'[\x20-\x7e]{4,253}\.[\x20-\x7e]{2,6}', text)
+                if "." in m and all(c.isascii() for c in m)
+            })
+        # entry_type == 0: полный DER сертификат
+        cert = x509.load_der_x509_certificate(cert_der)
+        domains: set[str] = set()
+        # CN из Subject
+        for attr in cert.subject:
+            from cryptography.x509.oid import NameOID
+            if attr.oid == NameOID.COMMON_NAME:
+                domains.add(attr.value.lower().lstrip("*."))
+        # SANs
+        try:
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            for dns_name in san.value.get_values_for_type(x509.DNSName):
+                domains.add(dns_name.lower().lstrip("*."))
+        except x509.ExtensionNotFound:
+            pass
+        return list(domains)
+    except Exception:
+        return []
+
+
+def _ct_get_entries(start: int, end: int) -> list[list[str]]:
+    """Скачивает блок записей CT-лога, возвращает список доменов для каждой записи."""
+    resp = httpx.get(
+        f"{_CT_LOG_URL}/ct/v1/get-entries",
+        params={"start": start, "end": min(end, start + 63)},  # CT API лимит ~64
+        timeout=_CT_TIMEOUT,
+    )
+    resp.raise_for_status()
+    raw_entries = resp.json().get("entries", [])
+
+    results = []
+    for entry in raw_entries:
+        try:
+            leaf_b64 = entry.get("leaf_input", "")
+            if not leaf_b64:
+                continue
+            leaf_bytes = base64.b64decode(leaf_b64 + "==")
+            domains = _parse_cert_domains(leaf_bytes)
+            if domains:
+                results.append(domains)
+        except Exception:
+            pass
+    return results
+
+
+def _extract_domains_from_raw(raw: str, target_domain: str) -> list[str]:
+    """Ищет совпадения с target_domain в raw-байтах сертификата (legacy fallback)."""
+    import re
+    found = re.findall(
+        r'(?:[a-zA-Z0-9*](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+' + re.escape(target_domain),
+        raw,
+    )
+    return list({d.lower().lstrip("*.") for d in found})
+
+
+def _scan_ct_certspotter(domain: str) -> list[dict[str, Any]]:
+    """
+    Fallback: запрашивает Certspotter API (SSLMate) — 100 запросов/час без ключа.
+    Индексированный поиск по CT-логам, возвращает все dns_names для domain.
+    """
+    try:
+        resp = httpx.get(
+            "https://api.certspotter.com/v1/issuances",
+            params={
+                "domain": domain,
+                "include_subdomains": "true",
+                "expand": "dns_names",
+            },
+            timeout=httpx.Timeout(20.0),
+        )
+        resp.raise_for_status()
+        records = resp.json()
+    except Exception as exc:
+        logger.error("[ct-certspotter] Ошибка запроса: %s", exc)
+        return []
+
+    seen: set[str] = set()
+    events = []
+    for rec in records:
+        for dns_name in rec.get("dns_names", []):
+            cert_domain = dns_name.lstrip("*.").lower()
+            if (cert_domain.endswith(f".{domain}") or cert_domain == domain) and cert_domain not in seen:
+                seen.add(cert_domain)
+                events.append(_make_subdomain_event(cert_domain, domain))
+
+    logger.info("[ct-certspotter] domain=%s: %d субдоменов найдено в %d записях",
+                domain, len(events), len(records))
+    return events
+
+
+def _scan_ct_google(domain: str, window_sec: int = 30) -> list[dict[str, Any]]:
+    """
+    Fallback: сначала пробуем crt.sh (индексированный поиск по домену),
+    затем как резерв — Google CT raw scan последних 64 записей.
+    """
+    # Приоритет 1: Certspotter (быстро, точно, indexed)
+    events = _scan_ct_certspotter(domain)
+    if events:
+        return events
+
+    # Приоритет 2: Google CT raw (последние 64 записи) — последний резерв
+    logger.warning("[ct-google] crt.sh не дал результатов, пробуем raw CT scan")
+    try:
+        tree_size = _ct_get_tree_size()
+    except Exception as exc:
+        logger.error("[ct-google] Не удалось получить tree size: %s", exc)
+        return []
+
+    start = max(0, tree_size - 64)
+    try:
+        all_domain_lists = _ct_get_entries(start, tree_size - 1)
+    except Exception as exc:
+        logger.error("[ct-google] Ошибка get-entries: %s", exc)
+        return []
+
+    seen: set[str] = set()
+    raw_events = []
+    for domains in all_domain_lists:
+        for cert_domain in domains:
+            if (cert_domain.endswith(f".{domain}") or cert_domain == domain) and cert_domain not in seen:
+                seen.add(cert_domain)
+                raw_events.append(_make_subdomain_event(cert_domain, domain))
+
+    logger.info("[ct-google] raw scan: %d совпадений в %d сертах",
+                len(raw_events), len(all_domain_lists))
+    return raw_events
+
+
 @app.task(bind=True, name="certstream_monitor.scan_ct_live", max_retries=1)
 def scan_ct_live(self, domain: str) -> dict[str, Any]:
     """
-    Celery-задача: слушает CertStream window_sec секунд и отправляет
-    обнаруженные поддомены в ingest API.
+    Celery-задача: слушает CertStream N секунд и отправляет новые поддомены в ingest.
+    При недоступности certstream.calidog.io — автоматически fallback на Google CT API.
     """
     if not _check_certstream():
         return {"status": "skipped", "reason": "certstream not installed", "new_subdomains": 0}
@@ -115,8 +290,14 @@ def scan_ct_live(self, domain: str) -> dict[str, Any]:
         logger.error("[certstream] Ошибка WebSocket: %s", exc)
         return {"status": "error", "error": str(exc), "new_subdomains": 0}
 
+    source = "certstream_live"
     if not events:
-        return {"status": "ok", "new_subdomains": 0}
+        logger.warning("[certstream] WebSocket вернул 0 событий — fallback на Google CT API")
+        events = _scan_ct_google(domain, _LISTEN_WINDOW_SEC)
+        source = "google_ct_fallback"
+
+    if not events:
+        return {"status": "ok", "source": source, "new_subdomains": 0}
 
     # Дедупликация по субдомену
     seen: set[str] = set()
@@ -140,8 +321,8 @@ def scan_ct_live(self, domain: str) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("[certstream] Ошибка отправки события: %s", exc)
 
-    logger.info("[certstream] %s: %d новых поддоменов отправлено", domain, sent)
-    return {"status": "ok", "new_subdomains": sent}
+    logger.info("[certstream] %s: %d новых поддоменов отправлено (source=%s)", domain, sent, source)
+    return {"status": "ok", "source": source, "new_subdomains": sent}
 
 
 # ─── Daemon-режим (не Celery) ─────────────────────────────────────────────────
