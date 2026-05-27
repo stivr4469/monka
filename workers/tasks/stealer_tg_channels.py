@@ -39,17 +39,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 STEALER_TG_CHANNELS: list[str] = [
-    # Проверены живыми (май 2026) — файловые дампы
-    "freeclouds",
-    "logsfreebrowsingzone",
-    "stealc",
-    "infostealers",
-    "vxunderground",
-    # Проверены живыми (май 2026) — combo/credential листы
-    "freecombolist",
-    "freeredlinelogs",
-    "freelogshqchat",
-    "MeduzaStealer",
+    # Проверены скачиванием (май 2026) — реальные файлы с кредами
+    "infostealers",       # ZIP-дампы инфостилеров
+    "freecombolist",      # TXT combo-листы login:pass
+    "freelogshqchat",     # ULP-листы (URL:Login:Pass)
+    "vxunderground",      # security research + malware samples
 ]
 
 _TELETHON_AVAILABLE = False
