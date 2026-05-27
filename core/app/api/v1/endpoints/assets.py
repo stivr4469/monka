@@ -1,9 +1,9 @@
 import asyncio
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import partial
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -24,14 +24,46 @@ from app.services.report_generator import (
 router = APIRouter(prefix="/assets", tags=["assets"])
 
 
-@router.get("/", response_model=list[AssetRead])
-async def list_assets(db: DBDep, current_user: CurrentUser) -> list[Asset]:
+class AssetListResponse(BaseModel):
+    """Ответ со списком активов и мета-данными пагинации."""
+    items: list[AssetRead]
+    total: int
+    skip: int
+    limit: int
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/", response_model=AssetListResponse)
+async def list_assets(
+    db: DBDep,
+    current_user: CurrentUser,
+    skip: int = Query(default=0, ge=0, description="Количество записей для пропуска"),
+    limit: int = Query(default=100, ge=1, le=1000, description="Размер страницы"),
+) -> AssetListResponse:
+    """
+    Список активов организации с offset-based пагинацией.
+    Параметры: skip (смещение, >= 0) и limit (размер страницы, 1–1000).
+    """
     if current_user.organization_id is None:
-        return []
-    result = await db.execute(
-        select(Asset).where(Asset.organization_id == current_user.organization_id)
+        return AssetListResponse(items=[], total=0, skip=skip, limit=limit)
+
+    base_q = select(Asset).where(Asset.organization_id == current_user.organization_id)
+
+    # Считаем общее количество для мета-данных
+    count_r = await db.execute(
+        select(func.count()).select_from(base_q.subquery())
     )
-    return list(result.scalars().all())
+    total = count_r.scalar_one()
+
+    # Выбираем страницу
+    result = await db.execute(
+        base_q.order_by(Asset.created_at.desc()).offset(skip).limit(limit)
+    )
+    raw_items = list(result.scalars().all())
+    items: list[AssetRead] = [AssetRead.model_validate(a) for a in raw_items]
+
+    return AssetListResponse(items=items, total=total, skip=skip, limit=limit)
 
 
 @router.post("/", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
@@ -43,12 +75,12 @@ async def create_asset(
     current_user: CurrentUser,
 ) -> Asset:
     if current_user.organization_id is None:
-        raise HTTPException(status_code=400, detail="Пользователь не привязан к организации")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пользователь не привязан к организации")
 
     # Проверка лимита доменов по тарифному плану (задача 8.I)
     org = await db.get(Organization, current_user.organization_id)
     if org is None:
-        raise HTTPException(status_code=400, detail="Организация не найдена")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Организация не найдена")
 
     plan: str = getattr(org, "plan", "starter") or "starter"
     limit: int = PLAN_DOMAIN_LIMITS.get(plan, PLAN_DOMAIN_LIMITS["starter"])
@@ -62,7 +94,7 @@ async def create_asset(
 
     if current_count >= limit:
         raise HTTPException(
-            status_code=402,  # Payment Required
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=(
                 f"Лимит доменов для плана '{plan}': {limit}. "
                 "Обновите тарифный план для добавления новых доменов."
@@ -96,7 +128,7 @@ async def get_asset(asset_id: str, db: DBDep, current_user: CurrentUser) -> Asse
     result = await db.execute(select(Asset).where(Asset.id == asset_id))
     asset = result.scalar_one_or_none()
     if asset is None or asset.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
     return asset
 
 
@@ -107,7 +139,7 @@ async def update_asset(
     result = await db.execute(select(Asset).where(Asset.id == asset_id))
     asset = result.scalar_one_or_none()
     if asset is None or asset.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(asset, field, value)
@@ -122,7 +154,7 @@ async def delete_asset(asset_id: str, db: DBDep, current_user: CurrentUser) -> N
     result = await db.execute(select(Asset).where(Asset.id == asset_id))
     asset = result.scalar_one_or_none()
     if asset is None or asset.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     await db.delete(asset)
     await db.commit()
@@ -171,6 +203,7 @@ _SEVERITY_WEIGHTS: dict[str, float] = {
 
 # λ=0.003 → 50% затухания за 231 день (≈6 месяцев). Было 0.005 (140 дней).
 _DECAY_RATE: float = 0.003
+_SECONDS_PER_DAY: float = 86400.0  # секунд в сутках
 
 
 def _severity_to_level(score: int) -> str:
@@ -196,7 +229,7 @@ def _calc_risk_penalty(
         return 0.0
     if detected.tzinfo is None:
         detected = detected.replace(tzinfo=timezone.utc)
-    delta_days = max(0.0, (now - detected).total_seconds() / 86400.0)
+    delta_days = max(0.0, (now - detected).total_seconds() / _SECONDS_PER_DAY)
     decay = math.exp(-_DECAY_RATE * delta_days)
     return weight * decay * importance
 
@@ -233,7 +266,7 @@ async def get_risk_score(
     asset = asset_result.scalar_one_or_none()
 
     if asset is None or asset.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     # Коэффициент важности — graceful fallback на 1.0 если поле отсутствует
     importance: float = getattr(asset, "importance", None) or 1.0
@@ -262,7 +295,7 @@ async def get_risk_score(
         detected = ev.detected_at
         if detected.tzinfo is None:
             detected = detected.replace(tzinfo=timezone.utc)
-        delta_days = max(0.0, (now - detected).total_seconds() / 86400.0)
+        delta_days = max(0.0, (now - detected).total_seconds() / _SECONDS_PER_DAY)
         decay = math.exp(-_DECAY_RATE * delta_days)
         contribution = weight * decay * importance
         total_penalty += contribution
@@ -314,7 +347,7 @@ async def _load_asset_and_events(
     asset = asset_result.scalar_one_or_none()
 
     if asset is None or asset.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     events_result = await db.execute(
         select(
@@ -502,7 +535,7 @@ async def get_asset_map(
     asset = asset_result.scalar_one_or_none()
 
     if asset is None or asset.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     # Загружаем последние 500 событий нужных типов
     relevant_types = (
@@ -646,19 +679,19 @@ async def add_supply_chain_asset(
     - asset_type должен быть 'vendor' или 'subsidiary' (не 'primary').
     """
     if current_user.organization_id is None:
-        raise HTTPException(status_code=400, detail="Пользователь не привязан к организации")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пользователь не привязан к организации")
 
     # Проверяем существование и принадлежность родительского актива
     parent_result = await db.execute(select(Asset).where(Asset.id == asset_id))
     parent = parent_result.scalar_one_or_none()
 
     if parent is None or parent.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     # Нельзя добавить vendor к vendor/subsidiary — только к primary
     if parent.asset_type != "primary":
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Нельзя добавить supply chain актив к '{parent.asset_type}'. "
                    "Родительский актив должен быть типа 'primary'.",
         )
@@ -698,7 +731,7 @@ async def list_supply_chain_assets(
     parent = parent_result.scalar_one_or_none()
 
     if parent is None or parent.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Актив не найден")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
     # Возвращаем все дочерние supply chain активы
     children_result = await db.execute(

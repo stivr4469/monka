@@ -43,13 +43,13 @@ async def get_current_user(
         from app.models.api_key import ApiKey
 
         key_hash = hashlib.sha256(token.encode()).hexdigest()
-        result = await db.execute(
+        key_result = await db.execute(
             select(ApiKey).where(
                 ApiKey.key_hash == key_hash,
                 ApiKey.is_active.is_(True),
             )
         )
-        api_key = result.scalar_one_or_none()
+        api_key = key_result.scalar_one_or_none()
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -91,7 +91,7 @@ get_current_user_or_api_key = get_current_user
 
 
 def verify_internal_secret(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+    credentials: Annotated[HTTPAuthorizationCredentials, Security(bearer_scheme)],
 ) -> None:
     """Проверяет shared secret воркеров."""
     if not hmac.compare_digest(credentials.credentials, settings.INTERNAL_API_SECRET):

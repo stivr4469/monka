@@ -46,6 +46,8 @@ _PRIVATE_NETS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
 ]
 
 
+_RETRY_BASE_DELAY_SECONDS: int = 60  # Экспоненциальная задержка: 60, 120, 240 сек
+
 def is_safe_url(url: str) -> bool:
     """
     SSRF-защита: блокирует запросы к внутренним/loopback адресам.
@@ -299,7 +301,7 @@ class IngestClient:
                 self._circuit.record_failure()
                 if attempt < self._max_retries:
                     # Экспоненциальная задержка: 60, 120, 240 секунд
-                    delay = 60 * (2 ** attempt)
+                    delay = _RETRY_BASE_DELAY_SECONDS * (2 ** attempt)
                     logger.warning(
                         "Ошибка отправки события (попытка %d/%d), повтор через %ds: %s",
                         attempt + 1,

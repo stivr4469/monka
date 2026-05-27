@@ -101,7 +101,8 @@ async def upload_stealer_log(
         raise
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Ошибка сохранения файла: {exc}") from exc
+        logger.error("Ошибка сохранения загруженного файла: %s", exc)
+        raise HTTPException(status_code=500, detail="Ошибка сохранения файла") from exc
 
     # Запускаем парсинг в фоне (парсер сам удалит tmp_path после обработки)
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"

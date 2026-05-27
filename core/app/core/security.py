@@ -18,10 +18,13 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(subject: Any, expires_delta: timedelta | None = None) -> str:
-    expire = datetime.now(timezone.utc) + (
+    now = datetime.now(timezone.utc)
+    expire = now + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    payload = {"sub": str(subject), "exp": expire}
+    # iat (issued-at) позволяет инвалидировать все токены ротацией SECRET_KEY
+    # и детектировать токены выданные до смены пароля на стороне сервиса
+    payload = {"sub": str(subject), "exp": expire, "iat": now}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 

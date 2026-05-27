@@ -69,7 +69,7 @@ async def run_stealer_sources(
     if not _SOURCES_AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Воркер недоступен: {_IMPORT_ERROR}",
+            detail="Воркер stealer_sources недоступен",
         )
 
     domain = body.domain

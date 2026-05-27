@@ -18,9 +18,9 @@
 """
 import io
 import logging
-import os
 import re
 import zipfile
+from collections.abc import Generator
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -141,7 +141,7 @@ def _detect_and_parse(lines: list[str]) -> list[dict]:
         if records:
             return records
 
-    http_lines = sum(1 for l in lines if l.strip().lower().startswith("http"))
+    http_lines = sum(1 for line in lines if line.strip().lower().startswith("http"))
     if http_lines > len(lines) * 0.3:
         records = _parse_three_field(lines)
         if records:
@@ -161,8 +161,8 @@ def _extract_domain(url: str, login: str) -> str | None:
             parsed = urlparse(url if "://" in url else "https://" + url)
             host = parsed.hostname or ""
             return host.lstrip("www.") if host else None
-        except Exception:
-            pass
+        except ValueError as exc:
+            logger.debug("[stealer] Не удалось разобрать URL '%s': %s", url, exc)
     if "@" in login:
         return login.split("@")[-1].lower()
     return None
@@ -180,7 +180,7 @@ def _matches_target(record: dict, target_domain: str) -> bool:
 # 7.A: Стриминговый итератор строк из ZIP без загрузки в RAM
 # ──────────────────────────────────────────────
 
-def _iter_text_files_from_zip(file_path: Path):
+def _iter_text_files_from_zip(file_path: Path) -> Generator[tuple[str, list[str]], None, None]:
     """
     Генератор: (filename, lines) для каждого .txt/.log/.csv внутри ZIP.
     Читает построчно через TextIOWrapper — не буферизует файл в RAM.
@@ -197,7 +197,7 @@ def _iter_text_files_from_zip(file_path: Path):
                     text_file = io.TextIOWrapper(raw_file, encoding="utf-8", errors="replace")
                     lines = list(text_file)  # читаем построчно
                 yield member, lines
-            except Exception as exc:
+            except (KeyError, zipfile.BadZipFile, OSError, UnicodeDecodeError) as exc:
                 logger.warning("[stealer] Не удалось прочитать %s: %s", member, exc)
 
 
@@ -285,14 +285,14 @@ def parse_stealer_log(
         sent = 0
         errors = 1
     except Exception as exc:
-        logger.error("[stealer] Критическая ошибка парсинга: %s", exc)
+        logger.error("[stealer] Критическая ошибка парсинга: %s", exc, exc_info=True)
         sent = 0
         errors = 1
     finally:
         # 7.A.4: удаляем временный файл после обработки
         try:
             file_path.unlink(missing_ok=True)
-        except Exception as exc:
+        except OSError as exc:
             logger.warning("[stealer] Не удалось удалить временный файл %s: %s", file_path, exc)
 
     logger.info(

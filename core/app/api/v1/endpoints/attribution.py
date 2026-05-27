@@ -129,7 +129,7 @@ def discover_attribution(
         )
     except Exception as exc:
         logger.error("[attribution] Ошибка discover для '%s': %s", body.company_name, exc)
-        raise HTTPException(status_code=502, detail=f"BGPView API ошибка: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Attribution engine недоступен (внешний API)") from exc
 
     return AttributionResponse(**result)
 
@@ -235,7 +235,7 @@ async def auto_suggest_assets(
         )
     except Exception as exc:
         logger.error("[auto-suggest] run_attribution упал для '%s': %s", body.company_name, exc)
-        raise HTTPException(status_code=502, detail=f"Attribution engine ошибка: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Attribution engine недоступен (внутренняя ошибка)") from exc
 
     asns: list[dict]  = attribution_result.get("asns", [])
     cidrs: list[dict] = attribution_result.get("cidrs", [])

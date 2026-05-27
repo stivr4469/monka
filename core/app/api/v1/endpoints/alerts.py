@@ -191,7 +191,7 @@ async def test_alert_rule(
         raise HTTPException(status_code=503, detail="workers/tasks не найдены")
     except Exception as exc:
         logger.error("Ошибка тестового алерта для правила %s: %s", rule_id, exc)
-        raise HTTPException(status_code=502, detail=f"Ошибка отправки: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Ошибка отправки тестового алерта") from exc
 
     if not success:
         raise HTTPException(

@@ -185,7 +185,7 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
     except Exception as exc:
         await db.rollback()
         logger.error("Ошибка сохранения события: %s", exc)
-        raise HTTPException(status_code=500, detail="Ошибка сохранения события") from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка сохранения события") from exc
 
     logger.info(
         "Событие принято: id=%s type=%s severity=%s domain=%s",
@@ -230,7 +230,7 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
             db.add(notif)
             await db.commit()
         except Exception as exc:
-            logger.warning("[ingest] Ошибка создания уведомления: %s", exc)
+            logger.warning("[ingest] Ошибка создания уведомления: %s", exc, exc_info=True)
             await db.rollback()
 
     # 7.C.1 / 9.I: Дублируем событие в OpenSearch асинхронно (не блокирует ответ).
@@ -383,6 +383,17 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             _create_bg_task(index_event(ev.id, _ev_data))
         # 9.E: Neo4j-граф для каждого события батча
         _create_bg_task(upsert_event_to_graph(_ev_data))
+
+        # Telegram-алерт для critical/high событий (зеркалирует логику ingest_event)
+        if _ALERTS_AVAILABLE and ev.severity in _SEVERITY_FOR_ALERTS and settings.TELEGRAM_BOT_TOKEN:
+            core_url = f"http://127.0.0.1:{_APP_PORT}"
+            get_executor().submit(
+                _dispatch_alerts,
+                _ev_data,
+                core_url,
+                settings.INTERNAL_API_SECRET,
+                settings.TELEGRAM_BOT_TOKEN,
+            )
 
     return {
         "status": "partial" if errors else "accepted",

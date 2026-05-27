@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, new_uuid
@@ -10,6 +10,12 @@ class Event(Base):
     """Нормализованное событие безопасности от воркера."""
 
     __tablename__ = "events"
+    __table_args__ = (
+        # Покрывает list_events: JOIN assets WHERE org ORDER BY detected_at DESC
+        Index("ix_event_asset_detected", "asset_id", "detected_at"),
+        # Покрывает get_risk_score: WHERE asset_id AND severity IN (...)
+        Index("ix_event_asset_severity", "asset_id", "severity"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

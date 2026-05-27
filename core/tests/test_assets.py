@@ -42,7 +42,15 @@ async def test_list_assets(client: AsyncClient, superuser_token: str, org_with_u
         headers={"Authorization": f"Bearer {superuser_token}"},
     )
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    data = resp.json()
+    # GET /assets/ возвращает AssetListResponse с пагинацией
+    assert "items" in data
+    assert "total" in data
+    assert "skip" in data
+    assert "limit" in data
+    assert isinstance(data["items"], list)
+    assert data["skip"] == 0
+    assert data["limit"] == 100
 
 
 @pytest.mark.asyncio

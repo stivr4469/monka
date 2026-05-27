@@ -38,8 +38,8 @@ async def get_asset_temptation(
 
     try:
         return await compute_asset_temptation(asset_id, db)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Актив не найден")
 
 
 @router.get(

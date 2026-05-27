@@ -69,23 +69,46 @@ _UNSAFE_DEFAULTS: frozenset[str] = frozenset({
 })
 
 
+_MIN_SECRET_KEY_LENGTH: int = 32
+
+
 def validate_secrets(s: Settings) -> None:
     """При старте приложения убеждаемся что секреты не оставлены дефолтными."""
     if s.SECRET_KEY in _UNSAFE_DEFAULTS:
         raise ValueError(
             "SECRET_KEY не изменён. Установите безопасное значение в .env"
         )
+    if len(s.SECRET_KEY) < _MIN_SECRET_KEY_LENGTH:
+        raise ValueError(
+            f"SECRET_KEY слишком короткий ({len(s.SECRET_KEY)} символов). "
+            f"Минимум {_MIN_SECRET_KEY_LENGTH} символов. "
+            "Генерация: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
     if s.INTERNAL_API_SECRET in _UNSAFE_DEFAULTS:
         raise ValueError(
             "INTERNAL_API_SECRET не изменён. Установите безопасное значение в .env"
+        )
+    if len(s.INTERNAL_API_SECRET) < _MIN_SECRET_KEY_LENGTH:
+        raise ValueError(
+            f"INTERNAL_API_SECRET слишком короткий ({len(s.INTERNAL_API_SECRET)} символов). "
+            f"Минимум {_MIN_SECRET_KEY_LENGTH} символов. "
+            "Генерация: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
         )
     if s.FIRST_SUPERUSER_PASSWORD in _UNSAFE_DEFAULTS:
         raise ValueError(
             "FIRST_SUPERUSER_PASSWORD не изменён. Установите безопасное значение в .env"
         )
+    if len(s.FIRST_SUPERUSER_PASSWORD) < 12:
+        raise ValueError(
+            "FIRST_SUPERUSER_PASSWORD слишком короткий. Минимум 12 символов."
+        )
     if s.ALGORITHM not in {"HS256", "HS384", "HS512"}:
         raise ValueError(
             f"Небезопасный JWT алгоритм: {s.ALGORITHM!r}. Допустимы: HS256, HS384, HS512"
+        )
+    if not s.DEV_MODE and s.FIRST_SUPERUSER_EMAIL == "admin@example.com":
+        raise ValueError(
+            "FIRST_SUPERUSER_EMAIL не изменён. Установите реальный email в .env"
         )
     if s.DEV_MODE:
         import logging

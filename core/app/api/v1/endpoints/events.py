@@ -6,14 +6,16 @@
 Прямая фильтрация по event.asset_id гарантирует изоляцию тенантов.
 """
 import csv
+import json
 import io
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, HTTPException, Query, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
+from sqlalchemy.sql import Select
 
 from app.api.deps import CurrentUser, DBDep
 from app.core.config import settings
@@ -68,7 +70,7 @@ class EventListResponse(BaseModel):
     next_before: str | None  # ISO-8601 timestamp для следующего запроса ?before=
 
 
-def _org_event_query(organization_id: str):
+def _org_event_query(organization_id: str) -> Select:
     """
     Базовый запрос событий с фильтром по организации.
 
@@ -82,6 +84,31 @@ def _org_event_query(organization_id: str):
         .join(Asset, Event.asset_id == Asset.id)
         .where(Asset.organization_id == organization_id)
     )
+
+
+async def _get_org_event(
+    event_id: str,
+    organization_id: str,
+    db: "DBDep",  # type: ignore[name-defined]
+) -> "Event":
+    """
+    DRY-хелпер: загружает событие по id с проверкой принадлежности организации.
+    Поднимает HTTP 404 если событие не найдено или принадлежит другой org.
+    """
+    q = (
+        select(Event)
+        .join(Asset, Event.asset_id == Asset.id)
+        .where(
+            Event.id == event_id,
+            Asset.organization_id == organization_id,
+        )
+    )
+    result = await db.execute(q)
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+    return event
+
 
 
 @router.get("", response_model=EventListResponse, include_in_schema=False)
@@ -191,7 +218,7 @@ async def event_stats(
     if domain:
         sev_q = sev_q.where(Event.target_domain == domain)
     sev_r = await db.execute(sev_q)
-    by_severity = dict(sev_r.all())
+    by_severity: dict[str, int] = {row[0]: row[1] for row in sev_r.all()}
 
     # По типу события
     type_q = (
@@ -203,7 +230,7 @@ async def event_stats(
     if domain:
         type_q = type_q.where(Event.target_domain == domain)
     type_r = await db.execute(type_q)
-    by_type = dict(type_r.all())
+    by_type: dict[str, int] = {row[0]: row[1] for row in type_r.all()}
 
     return EventStats(total=total, by_severity=by_severity, by_type=by_type)
 
@@ -280,7 +307,6 @@ async def export_events(
 
     else:
         # JSON: сериализуем через Pydantic чтобы не тащить payload в CSV
-        import json
         data = [
             {
                 "id": e.id,
@@ -319,20 +345,7 @@ async def reveal_password(
     if current_user.organization_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет организации")
 
-    # Получаем событие с проверкой принадлежности к организации через asset
-    q = (
-        select(Event)
-        .join(Asset, Event.asset_id == Asset.id)
-        .where(
-            Event.id == event_id,
-            Asset.organization_id == current_user.organization_id,
-        )
-    )
-    result = await db.execute(q)
-    event = result.scalar_one_or_none()
-
-    if not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+    event = await _get_org_event(event_id, current_user.organization_id, db)
 
     if event.event_type != "stealer_log":
         raise HTTPException(
@@ -350,7 +363,13 @@ async def reveal_password(
     try:
         password = decrypt_password(enc, settings.INTERNAL_API_SECRET)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        # Не раскрываем детали криптографической ошибки в HTTP-ответе
+        import logging as _logging
+        _logging.getLogger(__name__).error("decrypt_password failed for event %s: %s", event_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка расшифровки пароля",
+        )
 
     return {
         "event_id": event_id,
@@ -389,7 +408,6 @@ async def search_events(
         return {"source": "opensearch", "total": len(filtered), "items": filtered[:limit]}
 
     # Fallback: PostgreSQL LIKE-поиск
-    from sqlalchemy import or_, cast, String
     pg_q = (
         select(Event)
         .join(Asset, Asset.id == Event.asset_id, isouter=True)
@@ -439,7 +457,7 @@ async def resolve_event(
     event_id: str,
     db: DBDep,
     current_user: CurrentUser,
-    body: ResolveRequest = ResolveRequest(),
+    body: ResolveRequest = Body(default_factory=ResolveRequest),
 ) -> dict:
     """
     11.D: Помечает событие как устранённое.
@@ -449,19 +467,7 @@ async def resolve_event(
     if current_user.organization_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет организации")
 
-    q = (
-        select(Event)
-        .join(Asset, Event.asset_id == Asset.id)
-        .where(
-            Event.id == event_id,
-            Asset.organization_id == current_user.organization_id,
-        )
-    )
-    result = await db.execute(q)
-    event = result.scalar_one_or_none()
-
-    if not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+    event = await _get_org_event(event_id, current_user.organization_id, db)
 
     event.resolved = True
     event.resolved_at = datetime.now(timezone.utc)
@@ -488,19 +494,7 @@ async def event_hints(
     if current_user.organization_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет организации")
 
-    q = (
-        select(Event)
-        .join(Asset, Event.asset_id == Asset.id)
-        .where(
-            Event.id == event_id,
-            Asset.organization_id == current_user.organization_id,
-        )
-    )
-    result = await db.execute(q)
-    event = result.scalar_one_or_none()
-
-    if not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Событие не найдено")
+    event = await _get_org_event(event_id, current_user.organization_id, db)
 
     return {
         "event_id": event_id,

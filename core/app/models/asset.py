@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import Float, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, new_uuid
@@ -16,7 +16,13 @@ class Asset(Base, TimestampMixin):
     """Отслеживаемый домен/IP, принадлежащий организации."""
 
     __tablename__ = "assets"
-    __table_args__ = (UniqueConstraint("organization_id", "domain", name="uq_asset_org_domain"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "domain", name="uq_asset_org_domain"),
+        # Покрывает list_assets: WHERE organization_id ORDER BY created_at DESC
+        Index("ix_asset_org_created", "organization_id", "created_at"),
+        # Покрывает поиск активов по org + домену (помимо UniqueConstraint)
+        Index("ix_asset_org_domain", "organization_id", "domain"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)

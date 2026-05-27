@@ -49,9 +49,10 @@ async def lifespan(app: FastAPI):
     # CRITICAL-2: проверяем что секреты не оставлены дефолтными
     validate_secrets(get_settings())
 
-    # Создаём таблицы (только для dev; в prod — Alembic)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Создаём таблицы только в dev — в prod используется Alembic
+    if get_settings().DEV_MODE:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
     # Создаём суперпользователя при первом запуске
     async with AsyncSessionLocal() as db:
@@ -107,6 +108,19 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None)
+    logger.exception(
+        "Unhandled exception | method=%s path=%s request_id=%s",
+        request.method, request.url.path, request_id,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+    )
+
 # Middleware добавляются в обратном порядке (LIFO) — LoggingMiddleware
 # должна быть последней добавленной чтобы обернуть все запросы первой
 # Безопасность CORS: wildcard origin несовместим с allow_credentials=True
@@ -130,16 +144,22 @@ app.add_middleware(LoggingMiddleware)
 app.include_router(api_router)
 
 
+@app.get("/healthz", tags=["health"])
+async def liveness() -> dict:
+    """Liveness probe — без зависимостей. 200 = процесс жив."""
+    return {"status": "ok"}
+
+
 @app.get("/health", tags=["health"])
-async def health(db: Annotated[AsyncSession, Depends(get_db)]) -> dict:
+async def health(db: Annotated[AsyncSession, Depends(get_db)]) -> JSONResponse | dict:
     """Проверяет доступность сервиса и соединение с БД."""
     try:
         await db.execute(text("SELECT 1"))
         return {"status": "ok", "db": "ok"}
-    except Exception as e:
+    except Exception:
         return JSONResponse(
             status_code=503,
-            content={"status": "degraded", "db": "error", "detail": str(e)},
+            content={"status": "degraded", "db": "error", "detail": "Database unavailable"},
         )
 
 
