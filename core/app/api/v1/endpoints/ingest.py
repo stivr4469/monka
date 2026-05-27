@@ -1,6 +1,7 @@
 import asyncio
 import uuid as _uuid
 import logging
+from datetime import datetime, timezone
 from typing import Coroutine, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,6 +9,7 @@ from sqlalchemy import select
 
 from app.api.deps import DBDep, verify_internal_secret
 from app.core.config import settings
+from app.db import AsyncSessionLocal
 from app.models.asset import Asset
 from app.models.event import Event
 from app.models.notification import Notification
@@ -177,6 +179,7 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         dedup_hash=event.dedup_hash,
         asset_id=asset.id if asset else None,
         condition=condition,
+        ingested_at=datetime.now(timezone.utc),
     )
     db.add(db_event)
 
@@ -197,7 +200,7 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
     )
 
     # Correlation Engine: группируем событие в инцидент в фоне
-    _create_bg_task(correlate_event(db_event.id, db))
+    _create_bg_task(correlate_event(db_event.id, AsyncSessionLocal))
 
     # Отправляем Telegram-алерт в фоне для non-info событий
     if _ALERTS_AVAILABLE and event.severity in _SEVERITY_FOR_ALERTS and settings.TELEGRAM_BOT_TOKEN:
@@ -335,6 +338,7 @@ async def bulk_ingest_events(body: BulkIngestRequest, db: DBDep) -> dict:
             dedup_hash=event.dedup_hash,
             asset_id=asset.id if asset else None,
             condition=condition,
+            ingested_at=datetime.now(timezone.utc),
         )
         new_events.append(db_event)
 

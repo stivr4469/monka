@@ -11,12 +11,18 @@ Correlation Engine — группировка связанных событий 
 """
 import uuid
 import logging
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.event import Event
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -58,71 +64,78 @@ def _get_family(event_type: str) -> str | None:
     return _TYPE_TO_FAMILY.get(event_type)
 
 
-async def correlate_event(event_id: str, db: AsyncSession) -> str | None:
+async def correlate_event(
+    event_id: str,
+    db_factory: Callable[[], "AsyncGenerator[AsyncSession, None]"],
+) -> str | None:
     """
     Присваивает событию incident_id по правилам корреляции.
 
-    Возвращает incident_id (UUID str) или None если событие изолировано
-    (нет asset_id или тип события не входит ни в одно семейство).
+    Принимает фабрику сессий (AsyncSessionLocal), а не саму сессию —
+    фоновая задача не должна использовать request-scoped сессию которая
+    будет закрыта до завершения задачи.
+
+    Возвращает incident_id (UUID str) или None если событие изолировано.
     """
-    # Загружаем целевое событие
-    result = await db.execute(select(Event).where(Event.id == event_id))
-    event = result.scalar_one_or_none()
+    async with db_factory() as db:
+        # Загружаем целевое событие
+        result = await db.execute(select(Event).where(Event.id == event_id))
+        event = result.scalar_one_or_none()
 
-    if event is None:
-        logger.warning("[correlation] Событие не найдено: id=%s", event_id)
-        return None
+        if event is None:
+            logger.warning("[correlation] Событие не найдено: id=%s", event_id)
+            return None
 
-    # Событие без привязанного актива коррелировать нельзя
-    if event.asset_id is None:
-        return None
+        # Событие без привязанного актива коррелировать нельзя
+        if event.asset_id is None:
+            return None
 
-    # Определяем семейство
-    family = _get_family(event.event_type)
-    if family is None:
-        return None
+        # Определяем семейство
+        family = _get_family(event.event_type)
+        if family is None:
+            return None
 
-    # Все типы событий одного семейства
-    family_types = list(EVENT_FAMILIES[family])
+        # Все типы событий одного семейства
+        family_types = list(EVENT_FAMILIES[family])
 
-    # Временное окно
-    window_start = event.detected_at - timedelta(hours=WINDOW_HOURS)
-    window_end = event.detected_at + timedelta(hours=WINDOW_HOURS)
+        # Временное окно
+        window_start = event.detected_at - timedelta(hours=WINDOW_HOURS)
+        window_end = event.detected_at + timedelta(hours=WINDOW_HOURS)
 
-    # Ищем существующий инцидент в окне: событие того же актива и семейства
-    # с уже присвоенным incident_id
-    stmt = (
-        select(Event.incident_id)
-        .where(
-            Event.asset_id == event.asset_id,
-            Event.event_type.in_(family_types),
-            Event.incident_id.is_not(None),
-            Event.detected_at >= window_start,
-            Event.detected_at <= window_end,
-            Event.id != event_id,
+        # Ищем существующий инцидент в окне: событие того же актива и семейства
+        # с уже присвоенным incident_id
+        stmt = (
+            select(Event.incident_id)
+            .where(
+                Event.asset_id == event.asset_id,
+                Event.event_type.in_(family_types),
+                Event.incident_id.is_not(None),
+                Event.detected_at >= window_start,
+                Event.detected_at <= window_end,
+                Event.id != event_id,
+            )
+            .order_by(Event.detected_at.asc())
+            .limit(1)
         )
-        .order_by(Event.detected_at.asc())
-        .limit(1)
-    )
-    existing = await db.execute(stmt)
-    row = existing.scalar_one_or_none()
+        existing = await db.execute(stmt)
+        row = existing.scalar_one_or_none()
 
-    incident_id: str = row if row else str(uuid.uuid4())
+        incident_id: str = row if row else str(uuid.uuid4())
 
-    # Сохраняем incident_id в событие
-    event.incident_id = incident_id
-    try:
-        await db.commit()
-        logger.info(
-            "[correlation] event_id=%s → incident_id=%s (family=%s)",
-            event_id, incident_id, family,
-        )
-    except Exception as exc:
-        await db.rollback()
-        logger.error("[correlation] Ошибка сохранения incident_id: %s", exc)
-        return None
+        # Сохраняем incident_id в событие
+        event.incident_id = incident_id
+        try:
+            await db.commit()
+            logger.info(
+                "[correlation] event_id=%s → incident_id=%s (family=%s)",
+                event_id, incident_id, family,
+            )
+        except Exception as exc:
+            await db.rollback()
+            logger.error("[correlation] Ошибка сохранения incident_id: %s", exc)
+            return None
 
-    return incident_id
+        return incident_id
 
 
 async def get_incident_events(incident_id: str, db: AsyncSession) -> list[Event]:
@@ -135,7 +148,7 @@ async def get_incident_events(incident_id: str, db: AsyncSession) -> list[Event]
     return list(result.scalars().all())
 
 
-async def get_open_incidents(org_id: int, db: AsyncSession) -> list[dict]:
+async def get_open_incidents(org_id: str, db: AsyncSession) -> list[dict]:
     """
     Возвращает список активных инцидентов организации.
 

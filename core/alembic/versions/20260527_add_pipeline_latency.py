@@ -29,7 +29,6 @@ def upgrade() -> None:
         sa.Column(
             "ingested_at",
             sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
             nullable=True,
             comment="Время приёма события API",
         ),

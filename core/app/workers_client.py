@@ -18,6 +18,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import sys
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -28,20 +29,23 @@ logger = logging.getLogger(__name__)
 # max_workers=8: достаточно для параллельного запуска всех типов сканирований.
 # thread_name_prefix облегчает отладку в логах и профилировщиках.
 _executor: concurrent.futures.ThreadPoolExecutor | None = None
+_executor_lock = threading.Lock()
 
 
 def get_executor() -> concurrent.futures.ThreadPoolExecutor:
     """
     Возвращает глобальный ThreadPoolExecutor.
-    Создаётся при первом вызове (lazy init), живёт весь процесс.
+    Создаётся при первом вызове (lazy init, double-checked locking), живёт весь процесс.
     """
     global _executor
     if _executor is None:
-        _executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=8,
-            thread_name_prefix="easm_worker",
-        )
-        logger.info("[workers_client] ThreadPoolExecutor создан: max_workers=8")
+        with _executor_lock:
+            if _executor is None:
+                _executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=8,
+                    thread_name_prefix="easm_worker",
+                )
+                logger.info("[workers_client] ThreadPoolExecutor создан: max_workers=8")
     return _executor
 
 

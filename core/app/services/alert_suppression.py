@@ -86,6 +86,28 @@ class AlertSuppressionStore:
             rec.last_fired = time.time()
             rec.escalation_sent = False
 
+    def check_and_fire(self, rule_id: int, severity: str) -> bool:
+        """
+        Атомарно проверяет suppression И записывает fired под одним локом.
+
+        Возвращает True если алерт подавлён (НЕ нужно отправлять).
+        Для high/critical всегда возвращает False (не подавляется) и записывает fired.
+
+        Используется вместо отдельных should_suppress + record_fired для
+        устранения TOCTOU-race при конкурентных потоках.
+        """
+        with self._lock:
+            rec = self._get_or_create(rule_id)
+            now = time.time()
+
+            if severity not in _IMMEDIATE_SEVERITIES:
+                if (now - rec.last_fired) < SUPPRESSION_WINDOW_SEC:
+                    return True  # подавить
+
+            rec.last_fired = now
+            rec.escalation_sent = False
+            return False  # отправить
+
     def add_to_batch(self, rule_id: int, event_data: dict) -> list[dict] | None:
         """
         Добавляет событие в батч-очередь правила.
@@ -122,11 +144,22 @@ class AlertSuppressionStore:
         Принудительно сбрасывает все непустые батчи независимо от deadline.
         Вызывается из Celery beat каждые BATCH_WINDOW_SEC секунд.
 
+        Также удаляет записи для правил которые давно не срабатывали
+        (более 48 suppression-окон без активности) — защита от memory leak.
+
         Возвращает dict {rule_id: [события]} для непустых батчей.
         """
         result: dict[int, list[dict]] = {}
+        # Правило неактивно если не стреляло дольше 48 окон подавления
+        evict_cutoff = time.time() - SUPPRESSION_WINDOW_SEC * 48
         with self._lock:
             now = time.time()
+            stale_ids = [
+                rid for rid, rec in self._records.items()
+                if not rec.pending_batch and rec.last_fired < evict_cutoff
+            ]
+            for rid in stale_ids:
+                del self._records[rid]
             for rule_id, rec in self._records.items():
                 if rec.pending_batch:
                     result[rule_id] = list(rec.pending_batch)
@@ -158,7 +191,10 @@ class AlertSuppressionStore:
                 if not rec.pending_batch:
                     continue
                 candidates.append((rule_id, list(rec.pending_batch)))
-                # Отмечаем что эскалацию по этому правилу уже запланировали
+                # Очищаем батч чтобы flush_all_batches не переслал те же события
+                rec.pending_batch = []
+                rec.batch_deadline = 0.0
+                rec.last_fired = now
                 rec.escalation_sent = True
         return candidates
 

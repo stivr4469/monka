@@ -65,6 +65,8 @@ async def list_incidents(
 
     Возвращает инциденты отсортированные по severity DESC, затем last_seen DESC.
     """
+    if current_user.organization_id is None:
+        return []
     incidents = await get_open_incidents(current_user.organization_id, db)
     return incidents
 
@@ -81,9 +83,11 @@ async def get_events_by_incident(
     Проверяет что хотя бы одно событие принадлежит организации пользователя
     (через asset_id → assets.organization_id), иначе 404.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select as _select
     from app.models.asset import Asset
-    from app.models.event import Event
+
+    if current_user.organization_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Инцидент не найден")
 
     # Загружаем события инцидента
     events = await get_incident_events(incident_id, db)
@@ -94,26 +98,28 @@ async def get_events_by_incident(
             detail=f"Инцидент {incident_id!r} не найден",
         )
 
-    # Проверка принадлежности к организации: хотя бы одно событие
-    # должно иметь asset в org пользователя
-    asset_ids = {ev.asset_id for ev in events if ev.asset_id}
-    if not asset_ids:
+    # Собираем asset_id из событий
+    all_asset_ids = {ev.asset_id for ev in events if ev.asset_id}
+    if not all_asset_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Инцидент {incident_id!r} не найден",
         )
 
-    from sqlalchemy import select as _select
-    result = await db.execute(
+    # Получаем только asset_id принадлежащие организации пользователя
+    rows = await db.execute(
         _select(Asset.id).where(
-            Asset.id.in_(asset_ids),
+            Asset.id.in_(all_asset_ids),
             Asset.organization_id == current_user.organization_id,
-        ).limit(1)
+        )
     )
-    if result.scalar_one_or_none() is None:
+    org_asset_ids = {row[0] for row in rows.all()}
+
+    if not org_asset_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Инцидент {incident_id!r} не найден",
         )
 
-    return events
+    # Возвращаем только события активов этой организации (защита от cross-tenant leak)
+    return [ev for ev in events if ev.asset_id in org_asset_ids]
