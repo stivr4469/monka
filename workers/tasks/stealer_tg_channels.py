@@ -15,14 +15,17 @@
        TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
   4. Первый запуск создаст файл сессии (одноразовая авторизация по SMS)
 
-Известные каналы со стилер-логами (проверять актуальность):
-  Файловые дампы:
-    @freelogs_shop, @stealerlogs, @freeclouds, @logs_mafia
-    @raccoon_logs_free, @redline_logs_free, @vidar_logs_channel
-    @LummaC2Logs, @MetaStealer_logs, @StealC_logs
-  Combo-листы:
-    @freecombolist, @combo_logs_free, @logs_free_club
-    @freeredlinelogs, @leakednation
+Каналы проверены через Telethon (май 2026), живые отмечены ✓:
+  Файловые дампы (с ZIP/TXT вложениями):
+    ✓ @freeclouds, @logsfreebrowsingzone, @stealc, @infostealers
+    ✓ @vxunderground (security research + samples)
+  Combo/credential листы:
+    ✓ @freecombolist, @freeredlinelogs, @freelogshqchat, @MeduzaStealer
+  Мёртвые (май 2026):
+    @freelogs_shop, @stealerlogs, @logs_mafia, @combo_logs_free,
+    @logs_free_club, @redline_logs_free, @raccoon_logs_free,
+    @vidar_logs_channel, @LummaC2Logs, @MetaStealer_logs, @StealC_logs,
+    @leakednation, @logs_cloud, @cloudlogs_free, @free_logs_daily, @InfoStealer_News
 
   Большинство реальных каналов — приватные или со скрытой историей.
   Доступ возможен только через полноценный Telegram-клиент (Telethon/Pyrogram).
@@ -36,26 +39,17 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 STEALER_TG_CHANNELS: list[str] = [
-    "freelogs_shop",
-    "stealerlogs",
+    # Проверены живыми (май 2026) — файловые дампы
     "freeclouds",
-    "logs_mafia",
+    "logsfreebrowsingzone",
+    "stealc",
+    "infostealers",
+    "vxunderground",
+    # Проверены живыми (май 2026) — combo/credential листы
     "freecombolist",
-    "combo_logs_free",
-    "logs_free_club",
     "freeredlinelogs",
-    "redline_logs_free",
-    "raccoon_logs_free",
-    "vidar_logs_channel",
-    "LummaC2Logs",
-    "MetaStealer_logs",
-    "StealC_logs",
-    "leakednation",
-    # Добавлены по результатам проверки доступности (май 2026)
-    "logs_cloud",
-    "cloudlogs_free",
-    "free_logs_daily",
-    "InfoStealer_News",
+    "freelogshqchat",
+    "MeduzaStealer",
 ]
 
 _TELETHON_AVAILABLE = False
