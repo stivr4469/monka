@@ -50,7 +50,7 @@ GITLEAKS_ASSET_PATTERN = "linux_x64"
 # Временная директория для клонирования репозиториев
 CLONE_BASE = Path("/tmp/gitleaks_scan")
 
-# FP-фильтр для репозиториев
+# FP-фильтр для репозиториев (по имени/URL репо)
 _FP_REPO_RE = re.compile(
     r"(?i)"
     # Списки доменов / исследовательские датасеты
@@ -60,6 +60,10 @@ _FP_REPO_RE = re.compile(
     r"|reviewnav.?handler|alexa.?top|majestic.?million"
     r"|tracking.?pixel|pixel.?track"
     r"|top[\-_]?\d+k?|alexa|majestic|umbrella"
+    # Списки сайтов / URL-листы (mozilla-data-sitelists, url-list, sitelist и т.д.)
+    r"|site.?list|sitelists?|url.?list|urllist|data.?list"
+    r"|web.?list|host.?list|block.?list|allow.?list|white.?list"
+    r"|annotation.?url|link.?list|pihole|adblock|ublock"
     # SMS-бомберы, спам-инструменты, атак-утилиты
     r"|sms.?bomb|sms.?attack|sms.?spam|sms.?flood|smsbom|smsham"
     r"|maxwell.?spammer|spammer|b0mb3r|bomber|flooder|ddoser"
@@ -71,11 +75,27 @@ _FP_REPO_RE = re.compile(
     r"|antichristone|umutkara.?tools|imasender"
 )
 
+# FP-фильтр для файлов — если совпадение в файле такого типа, репо не сканируем
+_FP_FILE_RE = re.compile(
+    r"(?i)"
+    # Файлы-списки доменов/URL
+    r"(?:^|/)(?:domains?|urls?|sites?|hosts?|whitelist|blocklist|allowlist|"
+    r"blacklist|adlist|filter|pihole|sitelists?|annotation.?url|trackers?)"
+    r"[^/]*\.(?:txt|csv|json|lst|list|conf|dat)$"
+    # Или любой файл с расширением .txt/.csv где в пути есть "list"/"data"
+    r"|/(?:lists?|data|datasets?|crawl|dump)/[^/]+\.(?:txt|csv|lst)$"
+)
+
 
 def _is_fp_repo(repo_url: str) -> bool:
     """Возвращает True если репозиторий — явный false positive (domain-list, research)."""
     repo_name = repo_url.rstrip("/").split("/")[-1]
     return bool(_FP_REPO_RE.search(repo_name) or _FP_REPO_RE.search(repo_url))
+
+
+def _is_fp_file_match(file_path: str) -> bool:
+    """Возвращает True если совпадение найдено в list-файле — домен там как URL в списке."""
+    return bool(_FP_FILE_RE.search(file_path))
 
 # Rate-limit GitHub: не более 10 запросов поиска в минуту
 GITHUB_SEARCH_URL = "https://api.github.com/search/code"
@@ -557,11 +577,17 @@ def _collect_repos_from_search(domain: str, github_token: str) -> tuple[set[str]
             items = resp.json().get("items", [])
             for item in items:
                 repo_html_url = item.get("repository", {}).get("html_url", "")
-                if repo_html_url and not _is_fp_repo(repo_html_url):
-                    repo_urls.add(repo_html_url)
-                elif repo_html_url:
+                file_path = item.get("path", "")
+                if not repo_html_url:
+                    continue
+                if _is_fp_repo(repo_html_url):
                     fp_filtered += 1
-                    logger.debug("[gitleaks] FP репозиторий пропущен: %s", repo_html_url)
+                    logger.debug("[gitleaks] FP репо пропущен: %s", repo_html_url)
+                elif _is_fp_file_match(file_path):
+                    fp_filtered += 1
+                    logger.debug("[gitleaks] FP файл-список пропущен: %s в %s", file_path, repo_html_url)
+                else:
+                    repo_urls.add(repo_html_url)
 
         except Exception as exc:
             logger.warning("Ошибка поиска репозиториев для '%s': %s", query, exc)
