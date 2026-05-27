@@ -59,6 +59,15 @@ class AlertRule(Base):
         nullable=False,
     )
 
+    # Время последней успешной отправки алерта по этому правилу.
+    # NULL = правило ещё никогда не срабатывало.
+    # Используется сервисом alert_suppression для подавления дублей и эскалации.
+    last_fired_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+
     # Relationship — не загружается жадно, только по запросу
     organization: Mapped["Organization"] = relationship()  # type: ignore[name-defined]  # noqa: F821
 

@@ -23,12 +23,15 @@ from app.api.v1.endpoints import (
     hardening_scan,
     human_osint_scan,
     identity_risk,
+    incidents,
     ingest,
     internal_alerts,
+    internal_score,
     mobile_scan,
     mssp,
     notifications,
     paste_scan,
+    pipeline_metrics,
     quick_scan,
     score,
     phishing_scan,
@@ -58,13 +61,17 @@ api_router = APIRouter(prefix="/api/v1")
 # Auth
 api_router.include_router(auth.router)
 
-# Assets + Events
+# Assets + Events + Incidents (Correlation Engine)
 api_router.include_router(assets.router)
 api_router.include_router(events.router)
+api_router.include_router(incidents.router)
 
 # Ingest (internal, для воркеров)
 api_router.include_router(ingest.router)
 api_router.include_router(internal_alerts.router)
+
+# Asset Intelligence Trends — ежедневные снимки score для трендов
+api_router.include_router(internal_score.router)
 
 # Сканирование
 api_router.include_router(github_scan.router)
@@ -174,4 +181,8 @@ api_router.include_router(identity_risk.router)
 
 # Workers Health Dashboard — статус всех воркеров в реальном времени
 api_router.include_router(workers_health.router)
+
+# Pipeline Latency Monitoring — измерение времени ingestion → alert
+api_router.include_router(pipeline_metrics.router)
+api_router.include_router(pipeline_metrics.internal_router)
 

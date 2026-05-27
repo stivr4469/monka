@@ -7,14 +7,16 @@ Identity Risk Engine — Gap 6: Identity-Centric Security.
 
 Агрегирует события из стилер-логов, cookie-валидатора и утечек сессий.
 Вычисляет MFA Bypass Risk Score и количество сотрудников под угрозой.
+Привязывает скомпрометированные данные к конкретным сотрудникам организации.
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset
@@ -27,6 +29,32 @@ _SESSION_EVENT_TYPES = {"active_session_leak", "session_leak"}
 _CREDENTIAL_EVENT_TYPES = {"stealer_log", "credential_leak", "email_breach"}
 _SECRET_EVENT_TYPES = {"github_secret_leak"}
 _ALL_IDENTITY_TYPES = _SESSION_EVENT_TYPES | _CREDENTIAL_EVENT_TYPES | _SECRET_EVENT_TYPES
+
+# Вес каждого типа события в risk score пользователя
+_USER_RISK_WEIGHTS: dict[str, int] = {
+    "active_session_leak": 40,
+    "session_leak":        40,
+    "stealer_log":         30,
+    "credential_leak":     20,
+    "email_breach":        20,
+    "github_secret_leak":  10,
+}
+
+
+# ─── Dataclass для пострадавшего пользователя ─────────────────────────────────
+
+@dataclass
+class AffectedUser:
+    email:              str
+    username:           str | None
+    source_type:        str           # stealer_log | credential_leak | session_leak
+    compromised_urls:   list[str]     = field(default_factory=list)
+    passwords_exposed:  int           = 0
+    last_seen:          datetime      = field(default_factory=lambda: datetime.now(timezone.utc))
+    risk_score:         int           = 0
+    # Внутреннее накопление — используется при merge, не отдаётся наружу
+    _event_types:       set[str]      = field(default_factory=set, repr=False)
+    _raw_score:         int           = field(default=0, repr=False)
 
 
 # ─── Pydantic схемы ───────────────────────────────────────────────────────────
@@ -47,9 +75,179 @@ class IdentityRiskReport(BaseModel):
     credential_leaks:        int    # credential_leak + email_breach
     github_secrets:          int    # github_secret_leak
     total_identity_events:   int
-    top_affected_domains:    list[str]  # топ-5 доменов по числу событий
+    top_affected_domains:    list[str]        # топ-5 доменов по числу событий
     event_breakdown:         list[IdentityEventSummary]
-    positioning:             str    # маркетинговый тезис
+    affected_users:          list[AffectedUser]  # топ-10 пострадавших по risk_score
+    positioning:             str               # маркетинговый тезис
+
+
+# ─── Извлечение пострадавших пользователей ───────────────────────────────────
+
+def _extract_email_from_payload(payload: dict, event_type: str) -> tuple[str | None, str | None]:
+    """
+    Извлекает (email, username) из payload события.
+
+    Поддерживаемые форматы:
+    - stealer_log / active_session_leak: payload.login
+    - credential_leak / email_breach: payload.email
+    Если login не содержит @, считаем его username без email.
+    """
+    email: str | None = None
+    username: str | None = None
+
+    # Пробуем поля по приоритету
+    raw = (
+        payload.get("email")
+        or payload.get("login")
+        or payload.get("username")
+        or ""
+    )
+    raw = str(raw).strip().lower()
+
+    if "@" in raw:
+        email = raw
+        # username = часть до @
+        username = raw.split("@")[0] or None
+    elif raw:
+        username = raw
+
+    return email, username
+
+
+def _url_from_payload(payload: dict, event_type: str) -> str | None:
+    """Извлекает скомпрометированный URL из payload события."""
+    return (
+        payload.get("url")
+        or payload.get("session_url")
+        or payload.get("domain")
+        or None
+    )
+
+
+def _has_password(payload: dict) -> bool:
+    """Проверяет наличие пароля в payload."""
+    pwd = payload.get("password") or payload.get("pass") or payload.get("pwd")
+    return bool(pwd and str(pwd).strip())
+
+
+def extract_affected_users(events: list[Event]) -> list[AffectedUser]:
+    """
+    Извлекает пострадавших пользователей из payload событий.
+    Поддерживает форматы:
+    - stealer_log: payload.login (email или user@domain), payload.url
+    - credential_leak: payload.email, payload.password
+    - email_breach: payload.email
+    - active_session_leak: payload.login, payload.session_url
+    - session_leak: payload.login, payload.session_url
+
+    Несколько событий для одного email объединяются (merge).
+    Risk score: session_leak=40pts + stealer_log=30pts + credential_leak=20pts
+                + github_secret=10pts (аккумулируется, cap 100).
+
+    Возвращает список, отсортированный по risk_score (убывание).
+    """
+    # Фильтруем только identity-типы
+    identity_types = _CREDENTIAL_EVENT_TYPES | _SESSION_EVENT_TYPES
+
+    # Промежуточный словарь: email → аккумулятор
+    accumulator: dict[str, _UserAccum] = {}
+
+    for ev in events:
+        if ev.event_type not in identity_types:
+            continue
+
+        payload: dict = ev.payload or {}
+        email, username = _extract_email_from_payload(payload, ev.event_type)
+
+        if not email:
+            # Нет email — не можем привязать к сотруднику
+            continue
+
+        url = _url_from_payload(payload, ev.event_type)
+        has_pwd = _has_password(payload)
+        ev_ts = ev.detected_at or datetime.now(timezone.utc)
+        weight = _USER_RISK_WEIGHTS.get(ev.event_type, 0)
+
+        if email not in accumulator:
+            accumulator[email] = _UserAccum(
+                email=email,
+                username=username,
+                source_type=ev.event_type,
+            )
+
+        accum = accumulator[email]
+        accum.merge(
+            event_type=ev.event_type,
+            url=url,
+            has_password=has_pwd,
+            detected_at=ev_ts,
+            weight=weight,
+            username=username,
+        )
+
+    # Преобразуем аккумуляторы в AffectedUser
+    result: list[AffectedUser] = []
+    for accum in accumulator.values():
+        result.append(accum.to_affected_user())
+
+    # Сортируем по убыванию risk_score
+    result.sort(key=lambda u: u.risk_score, reverse=True)
+    return result
+
+
+@dataclass
+class _UserAccum:
+    """Внутренний аккумулятор для merge событий одного email."""
+    email:             str
+    username:          str | None
+    source_type:       str           # тип первого события
+    _urls:             set[str]      = field(default_factory=set)
+    _passwords:        int           = 0
+    _last_seen:        datetime      = field(default_factory=lambda: datetime.now(timezone.utc))
+    _raw_score:        int           = 0
+    _event_types:      set[str]      = field(default_factory=set)
+
+    def merge(
+        self,
+        event_type: str,
+        url: str | None,
+        has_password: bool,
+        detected_at: datetime,
+        weight: int,
+        username: str | None,
+    ) -> None:
+        self._event_types.add(event_type)
+        if url:
+            self._urls.add(url)
+        if has_password:
+            self._passwords += 1
+        if detected_at > self._last_seen:
+            self._last_seen = detected_at
+        self._raw_score += weight
+        # Если username ещё не задан, берём из нового события
+        if self.username is None and username:
+            self.username = username
+        # source_type = наиболее рискованный тип
+        risk_order = ["active_session_leak", "session_leak", "stealer_log",
+                      "credential_leak", "email_breach"]
+        for t in risk_order:
+            if t in self._event_types:
+                self.source_type = t
+                break
+
+    def to_affected_user(self) -> AffectedUser:
+        score = min(100, self._raw_score)
+        return AffectedUser(
+            email=self.email,
+            username=self.username,
+            source_type=self.source_type,
+            compromised_urls=sorted(self._urls),
+            passwords_exposed=self._passwords,
+            last_seen=self._last_seen,
+            risk_score=score,
+            _event_types=self._event_types,
+            _raw_score=self._raw_score,
+        )
 
 
 # ─── Логика расчёта ───────────────────────────────────────────────────────────
@@ -150,6 +348,10 @@ async def compute_identity_risk(
         for et, (cnt, sev) in sorted(breakdown_map.items(), key=lambda x: -x[1][0])
     ]
 
+    # Пострадавшие пользователи (топ-10 по risk_score)
+    all_affected = extract_affected_users(events)
+    top_affected = all_affected[:10]
+
     positioning = (
         "SecurityScorecard и BitSight оценивают порты и версии ПО. "
         "Наша платформа защищает активные сессии сотрудников от прямого обхода MFA — "
@@ -168,6 +370,7 @@ async def compute_identity_risk(
         total_identity_events=len(events),
         top_affected_domains=top_domains,
         event_breakdown=breakdown,
+        affected_users=top_affected,
         positioning=positioning,
     )
 
@@ -185,6 +388,7 @@ def _empty_report(org_id: str) -> IdentityRiskReport:
         total_identity_events=0,
         top_affected_domains=[],
         event_breakdown=[],
+        affected_users=[],
         positioning=(
             "SecurityScorecard и BitSight оценивают порты и версии ПО. "
             "Наша платформа защищает активные сессии сотрудников от прямого обхода MFA — "

@@ -13,6 +13,7 @@ from app.models.event import Event
 from app.models.notification import Notification
 from app.models.organization import Organization
 from app.schemas.normalized_event import BulkIngestRequest, NormalizedEvent
+from app.services.correlation import correlate_event
 from app.services.graph_client import upsert_event_to_graph
 from app.services.opensearch_client import index_event, index_leaked_credential
 from app.services.webhook import notify_critical_event
@@ -194,6 +195,9 @@ async def ingest_event(event: NormalizedEvent, db: DBDep) -> dict:
         db_event.severity,
         db_event.target_domain,
     )
+
+    # Correlation Engine: группируем событие в инцидент в фоне
+    _create_bg_task(correlate_event(db_event.id, db))
 
     # Отправляем Telegram-алерт в фоне для non-info событий
     if _ALERTS_AVAILABLE and event.severity in _SEVERITY_FOR_ALERTS and settings.TELEGRAM_BOT_TOKEN:
