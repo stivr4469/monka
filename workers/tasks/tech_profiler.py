@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from workers.tasks.base import is_safe_url
 from workers.tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
@@ -346,6 +347,7 @@ def _fetch_domain(domain: str) -> tuple[dict[str, str], set[str], str]:
 
     Сначала HTTPS, при ошибке — fallback на HTTP.
     Возвращает (headers_dict, cookies_set, body_text).
+    Raises ValueError если домен резолвится в приватный IP (SSRF-защита).
     Raises httpx.RequestError если оба протокола недостижимы.
     """
     client_kwargs = {
@@ -360,6 +362,9 @@ def _fetch_domain(domain: str) -> tuple[dict[str, str], set[str], str]:
 
     for scheme in ("https", "http"):
         url = f"{scheme}://{domain}"
+        # SSRF-защита: блокируем запросы к внутренним/loopback адресам
+        if not is_safe_url(url):
+            raise ValueError(f"SSRF-защита: домен {domain} резолвится во внутренний адрес")
         try:
             with httpx.Client(**client_kwargs) as client:
                 response = client.get(url)

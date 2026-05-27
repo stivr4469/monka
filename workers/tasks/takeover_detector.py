@@ -14,6 +14,7 @@ from typing import NamedTuple
 import dns.resolver
 import httpx
 
+from workers.tasks.base import is_safe_url
 from workers.tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,12 @@ def _check_takeover(subdomain: str, cname: str) -> dict | None:
 
     _key, fingerprint = match
 
+    # SSRF-защита: субдомен не должен резолвиться во внутренний адрес
+    _check_url = f"https://{subdomain}"
+    if not is_safe_url(_check_url):
+        logger.warning("[takeover] SSRF-защита: %s резолвится во внутренний адрес, пропускаем", subdomain)
+        return None
+
     try:
         with httpx.Client(
             follow_redirects=True,
@@ -180,7 +187,7 @@ def _check_takeover(subdomain: str, cname: str) -> dict | None:
             verify=False,  # Сертификат на "мёртвом" поддомене может быть невалидным
             headers={"User-Agent": "EASM-TakeoverDetector/1.0"},
         ) as client:
-            response = client.get(f"https://{subdomain}")
+            response = client.get(_check_url)
 
         # Ограничиваем объём текста для поиска fingerprint
         body = response.text[:_MAX_BODY_SIZE]

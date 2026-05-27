@@ -183,7 +183,7 @@ def _rotate_tor_circuit() -> None:
 def _kill_stray_chromium() -> None:
     """Убивает оставшиеся процессы chromium после Playwright-сессии."""
     try:
-        subprocess.run(["pkill", "-9", "-f", "chromium"], check=False, timeout=5)
+        subprocess.run(["pkill", "-9", "-f", "chromium"], check=False, timeout=5, shell=False)  # ОБЯЗАТЕЛЬНО False — защита от инъекции команд
     except Exception:
         pass
 

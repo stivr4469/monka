@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from workers.tasks.base import is_safe_url
 from workers.tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
@@ -240,21 +241,26 @@ def run_tls_scan(
 
     # ── Шаг 2: HTTP GET для заголовков ───────────────────────────────────────
     response_headers: dict[str, str] = {}
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=_HTTP_TIMEOUT,
-            verify=False,  # TLS уже проверен ssl-модулем выше
-            headers={"User-Agent": "EASM-TLSFingerprinter/1.0"},
-        ) as client:
-            response = client.get(f"https://{domain}")
-            response_headers = dict(response.headers)
-    except httpx.TimeoutException:
-        logger.debug("[tls] %s: таймаут HTTP GET (заголовки пусты)", domain)
-    except httpx.RequestError as exc:
-        logger.debug("[tls] %s: ошибка HTTP GET: %s", domain, exc)
-    except Exception as exc:
-        logger.debug("[tls] %s: непредвиденная ошибка HTTP: %s", domain, exc)
+    _scan_url = f"https://{domain}"
+    # SSRF-защита: домен уже валидирован на уровне API, но проверяем повторно
+    if not is_safe_url(_scan_url):
+        logger.warning("[tls] SSRF-защита: %s резолвится во внутренний адрес, пропускаем HTTP GET", domain)
+    else:
+        try:
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=_HTTP_TIMEOUT,
+                verify=False,  # TLS уже проверен ssl-модулем выше
+                headers={"User-Agent": "EASM-TLSFingerprinter/1.0"},
+            ) as client:
+                response = client.get(_scan_url)
+                response_headers = dict(response.headers)
+        except httpx.TimeoutException:
+            logger.debug("[tls] %s: таймаут HTTP GET (заголовки пусты)", domain)
+        except httpx.RequestError as exc:
+            logger.debug("[tls] %s: ошибка HTTP GET: %s", domain, exc)
+        except Exception as exc:
+            logger.debug("[tls] %s: непредвиденная ошибка HTTP: %s", domain, exc)
 
     # ── Шаг 3: WAF детектирование ────────────────────────────────────────────
     waf_list = _detect_waf_from_headers(response_headers)

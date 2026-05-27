@@ -17,6 +17,7 @@ from pydantic import BaseModel, field_validator
 from app.api.deps import CurrentUser
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.ssrf import is_safe_url
 from app.workers_client import ensure_workers_path, get_executor
 
 router = APIRouter(prefix="/scan", tags=["scan"])
@@ -106,6 +107,14 @@ async def trigger_tech_scan(
         )
 
     domain = body.domain
+
+    # SSRF-защита: проверяем что домен не резолвится во внутренний адрес
+    if not is_safe_url(f"https://{domain}"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSRF: домен резолвится во внутренний адрес — запрос заблокирован",
+        )
+
     core_api_url = f"http://127.0.0.1:{settings.APP_PORT}"
 
     loop = asyncio.get_running_loop()

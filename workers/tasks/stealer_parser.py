@@ -31,6 +31,43 @@ from workers.tasks.cookie_validator import validate_cookies_from_zip
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
+# Защита от zip-бомб
+# ──────────────────────────────────────────────
+
+_MAX_UNCOMPRESSED = 500 * 1024 * 1024  # 500 МБ
+_MAX_FILES_IN_ZIP = 10_000
+_MAX_RATIO = 100
+
+
+def _safe_open_zip(path: Path) -> zipfile.ZipFile:
+    """
+    Открывает ZIP с проверками против zip-бомб:
+      - слишком много файлов внутри архива
+      - суммарный несжатый размер > 500 МБ
+      - коэффициент сжатия > 100 (признак zip-бомбы)
+
+    Raises ValueError если архив подозрителен.
+    """
+    zf = zipfile.ZipFile(path)
+    try:
+        infos = zf.infolist()
+        if len(infos) > _MAX_FILES_IN_ZIP:
+            raise ValueError(f"zip bomb suspected: {len(infos)} files (limit {_MAX_FILES_IN_ZIP})")
+        total = sum(i.file_size for i in infos)
+        if total > _MAX_UNCOMPRESSED:
+            raise ValueError(
+                f"zip bomb suspected: {total} bytes uncompressed (limit {_MAX_UNCOMPRESSED})"
+            )
+        compressed = sum(i.compress_size for i in infos) or 1
+        ratio = total / compressed
+        if ratio > _MAX_RATIO:
+            raise ValueError(f"zip bomb suspected: compression ratio {ratio:.1f} (limit {_MAX_RATIO})")
+    except ValueError:
+        zf.close()
+        raise
+    return zf
+
+# ──────────────────────────────────────────────
 # Парсеры форматов
 # ──────────────────────────────────────────────
 
@@ -147,8 +184,11 @@ def _iter_text_files_from_zip(file_path: Path):
     """
     Генератор: (filename, lines) для каждого .txt/.log/.csv внутри ZIP.
     Читает построчно через TextIOWrapper — не буферизует файл в RAM.
+
+    Перед итерацией проверяет архив на признаки zip-бомбы через _safe_open_zip.
+    Raises ValueError если архив подозрителен (передаётся выше).
     """
-    with zipfile.ZipFile(file_path) as zf:
+    with _safe_open_zip(file_path) as zf:
         for member in zf.namelist():
             if not member.lower().endswith((".txt", ".log", ".csv")):
                 continue
@@ -239,6 +279,11 @@ def parse_stealer_log(
             except Exception as exc:
                 logger.warning("[stealer] Ошибка валидации куков: %s", exc)
 
+    except ValueError as exc:
+        # Сюда попадают zip-бомбы и другие явные ошибки валидации
+        logger.error("[stealer] Отклонён (zip-бомба или плохой формат): %s", exc)
+        sent = 0
+        errors = 1
     except Exception as exc:
         logger.error("[stealer] Критическая ошибка парсинга: %s", exc)
         sent = 0

@@ -18,9 +18,48 @@ from typing import Generator
 
 import httpx
 
+from workers.tasks.base import is_safe_url
 from workers.tasks.bulk_ingest import bulk_ingest
 
 logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────
+# Защита от zip-бомб (дублируется из stealer_parser для независимости модуля)
+# ──────────────────────────────────────────────
+
+_MAX_UNCOMPRESSED = 500 * 1024 * 1024  # 500 МБ
+_MAX_FILES_IN_ZIP = 10_000
+_MAX_RATIO = 100
+
+
+def _safe_open_zip(path: Path) -> zipfile.ZipFile:
+    """
+    Открывает ZIP с проверками против zip-бомб:
+      - слишком много файлов внутри архива
+      - суммарный несжатый размер > 500 МБ
+      - коэффициент сжатия > 100 (признак zip-бомбы)
+
+    Raises ValueError если архив подозрителен.
+    """
+    zf = zipfile.ZipFile(path, "r")
+    try:
+        infos = zf.infolist()
+        if len(infos) > _MAX_FILES_IN_ZIP:
+            raise ValueError(f"zip bomb suspected: {len(infos)} files (limit {_MAX_FILES_IN_ZIP})")
+        total = sum(i.file_size for i in infos)
+        if total > _MAX_UNCOMPRESSED:
+            raise ValueError(
+                f"zip bomb suspected: {total} bytes uncompressed (limit {_MAX_UNCOMPRESSED})"
+            )
+        compressed = sum(i.compress_size for i in infos) or 1
+        ratio = total / compressed
+        if ratio > _MAX_RATIO:
+            raise ValueError(f"zip bomb suspected: compression ratio {ratio:.1f} (limit {_MAX_RATIO})")
+    except ValueError:
+        zf.close()
+        raise
+    return zf
+
 
 # Таймаут пассивного HEAD-запроса (секунды).
 _HEAD_TIMEOUT = 8
@@ -160,7 +199,7 @@ def _iter_cookie_files(zip_path: Path) -> Generator[tuple[str, list[dict]], None
     cookie_name_re = re.compile(r"cookie", re.IGNORECASE)
 
     try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
+        with _safe_open_zip(zip_path) as zf:
             for member in zf.namelist():
                 basename = member.split("/")[-1].split("\\")[-1]
                 lower = basename.lower()
@@ -196,6 +235,9 @@ def _iter_cookie_files(zip_path: Path) -> Generator[tuple[str, list[dict]], None
                 except Exception as exc:
                     logger.debug("[cookie_validator] Не удалось прочитать %s: %s", member, exc)
 
+    except ValueError as exc:
+        # Zip-бомба или другая ошибка валидации — логируем и завершаем генератор
+        logger.warning("[cookie_validator] Отклонён (zip-бомба или плохой формат): %s", exc)
     except zipfile.BadZipFile as exc:
         logger.warning("[cookie_validator] Некорректный ZIP-файл %s: %s", zip_path, exc)
     except Exception as exc:
@@ -240,6 +282,14 @@ def _check_cookie_alive(host: str, name: str, value: str, path: str = "/") -> di
     # Нормализуем хост: убираем ведущие точки (wildcard-домены)
     clean_host = host.lstrip(".")
     url = f"https://{clean_host}{path}"
+
+    # SSRF-защита: хост из стилер-лога не должен вести во внутреннюю сеть
+    if not is_safe_url(url):
+        logger.warning(
+            "[cookie_validator] SSRF-защита: %s резолвится во внутренний адрес, пропускаем",
+            clean_host,
+        )
+        return {"alive": False, "status_code": 0, "reason": "ssrf_blocked"}
 
     proxy = _pick_proxy()
     proxy_kwargs = {"proxies": {"all://": proxy}} if proxy else {}

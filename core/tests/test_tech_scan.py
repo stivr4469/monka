@@ -1,5 +1,5 @@
 """Тесты Technology Profiling — POST /api/v1/scan/tech-profile (задача 10.A)."""
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -152,12 +152,68 @@ async def test_tech_scan_rate_limit_headers_present(
     """Успешный запрос возвращает 200; rate-limiting не блокирует первый вызов."""
     mock_result = dict(_BASE_RESULT)
 
-    with patch(_WORKER_PATH, return_value=mock_result):
+    # DNS мокируем: тестовая среда не резолвит внешние домены → нужен публичный IP
+    with patch("app.core.ssrf.socket.gethostbyname", return_value="93.184.216.34"):
+        with patch(_WORKER_PATH, return_value=mock_result):
+            resp = await client.post(
+                TECH_SCAN_URL,
+                json={"domain": "ratelimit-check.com"},
+                headers=_auth_headers(superuser_token),
+            )
+
+    # Первый запрос в тесте никогда не должен блокироваться rate limiter'ом
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_tech_scan_ssrf_loopback_blocked(
+    client: AsyncClient,
+    superuser_token: str,
+) -> None:
+    """Домен, резолвящийся в loopback IP → 400 (SSRF-защита)."""
+    # Домен с корректным форматом, но DNS резолвится во внутренний адрес
+    with patch("app.core.ssrf.socket.gethostbyname", return_value="127.0.0.1"):
         resp = await client.post(
             TECH_SCAN_URL,
-            json={"domain": "ratelimit-check.com"},
+            json={"domain": "internal.example.com"},
             headers=_auth_headers(superuser_token),
         )
 
-    # Первый запрос в тесте никогда не должен блокироваться rate limiter'ом
+    assert resp.status_code == 400
+    assert "SSRF" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_tech_scan_ssrf_private_ip_blocked(
+    client: AsyncClient,
+    superuser_token: str,
+) -> None:
+    """Домен, резолвящийся в RFC 1918 адрес → 400 (SSRF-защита)."""
+    with patch("app.core.ssrf.socket.gethostbyname", return_value="192.168.1.100"):
+        resp = await client.post(
+            TECH_SCAN_URL,
+            json={"domain": "private.example.com"},
+            headers=_auth_headers(superuser_token),
+        )
+
+    assert resp.status_code == 400
+    assert "SSRF" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_tech_scan_ssrf_public_ip_allowed(
+    client: AsyncClient,
+    superuser_token: str,
+) -> None:
+    """Домен, резолвящийся в публичный IP → не блокируется SSRF-защитой."""
+    mock_result = dict(_BASE_RESULT)
+
+    with patch("app.core.ssrf.socket.gethostbyname", return_value="93.184.216.34"):
+        with patch(_WORKER_PATH, return_value=mock_result):
+            resp = await client.post(
+                TECH_SCAN_URL,
+                json={"domain": "example.com"},
+                headers=_auth_headers(superuser_token),
+            )
+
     assert resp.status_code == 200

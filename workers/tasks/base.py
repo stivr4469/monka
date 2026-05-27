@@ -3,22 +3,106 @@
 
 Содержит:
 - run_tool() — безопасный запуск внешних CLI-инструментов
+- is_safe_url() — SSRF-защита для исходящих HTTP-запросов
 - IngestClient — HTTP-клиент с retry и circuit breaker
 - BaseWorker — базовый класс для всех воркеров
 """
+import ipaddress
 import logging
+import socket
 import subprocess
 import time
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from workers.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ── SSRF-защита ───────────────────────────────────────────────────────────────
+
+# Приватные и зарезервированные сети — блокируем исходящие запросы к ним
+_PRIVATE_NETS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
+    ipaddress.ip_network("127.0.0.0/8"),      # loopback
+    ipaddress.ip_network("10.0.0.0/8"),        # RFC 1918
+    ipaddress.ip_network("172.16.0.0/12"),     # RFC 1918
+    ipaddress.ip_network("192.168.0.0/16"),    # RFC 1918
+    ipaddress.ip_network("169.254.0.0/16"),    # link-local (APIPA)
+    ipaddress.ip_network("100.64.0.0/10"),     # CGNAT RFC 6598
+    ipaddress.ip_network("192.0.2.0/24"),      # TEST-NET-1
+    ipaddress.ip_network("198.51.100.0/24"),   # TEST-NET-2
+    ipaddress.ip_network("203.0.113.0/24"),    # TEST-NET-3
+    ipaddress.ip_network("224.0.0.0/4"),       # multicast
+    ipaddress.ip_network("255.255.255.255/32"),# broadcast
+    ipaddress.ip_network("::1/128"),           # IPv6 loopback
+    ipaddress.ip_network("fe80::/10"),         # IPv6 link-local
+    ipaddress.ip_network("fc00::/7"),          # IPv6 ULA
+]
+
+
+def is_safe_url(url: str) -> bool:
+    """
+    SSRF-защита: блокирует запросы к внутренним/loopback адресам.
+
+    Проверяет схему (только http/https), наличие хоста и то, что IP-адрес
+    (или DNS-резолв хоста) не попадает в приватные/зарезервированные диапазоны.
+
+    При ошибке DNS-резолва работает по принципу fail-closed (блокирует).
+
+    Args:
+        url: Полный URL с схемой (например "https://example.com/path").
+
+    Returns:
+        True  — URL безопасен для исходящего запроса.
+        False — URL небезопасен (SSRF), запрос нужно заблокировать.
+    """
+    try:
+        parsed = urlparse(url)
+
+        if parsed.scheme not in ("http", "https"):
+            logger.warning("[ssrf] Заблокирован: неверная схема '%s' для %s", parsed.scheme, url)
+            return False
+
+        host = parsed.hostname or ""
+        if not host:
+            logger.warning("[ssrf] Заблокирован: отсутствует хост в %s", url)
+            return False
+
+        # Пробуем разобрать хост как прямой IP-адрес
+        try:
+            addr = ipaddress.ip_address(host)
+            if any(addr in net for net in _PRIVATE_NETS):
+                logger.warning("[ssrf] Заблокирован: приватный IP %s в URL %s", host, url)
+                return False
+            return True
+        except ValueError:
+            pass  # хост — DNS-имя, выполняем резолв
+
+        # DNS-резолв: fail-closed при ошибке
+        try:
+            resolved_ip = socket.gethostbyname(host)
+            addr = ipaddress.ip_address(resolved_ip)
+            if any(addr in net for net in _PRIVATE_NETS):
+                logger.warning(
+                    "[ssrf] Заблокирован: %s резолвится в приватный IP %s (URL: %s)",
+                    host, resolved_ip, url,
+                )
+                return False
+        except OSError as exc:
+            logger.warning("[ssrf] Заблокирован: DNS-ошибка для %s: %s", host, exc)
+            return False
+
+        return True
+
+    except Exception as exc:
+        logger.warning("[ssrf] Заблокирован: непредвиденная ошибка при проверке %s: %s", url, exc)
+        return False
 
 
 # ── Запуск внешних инструментов ──────────────────────────────────────────────

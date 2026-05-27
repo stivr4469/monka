@@ -127,6 +127,7 @@ def _run_holehe_cli(email: str) -> list[dict[str, Any]]:
             capture_output=True,
             text=True,
             timeout=120,
+            shell=False,  # ОБЯЗАТЕЛЬНО False — защита от инъекции команд
         )
         found = []
         for line in result.stdout.splitlines():
