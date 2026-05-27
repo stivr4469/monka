@@ -210,14 +210,42 @@ class API {
   }
 
   /**
-   * GET /api/v1/assets/{id}/risk-score
-   * Возвращает { score: number } или 404 → возвращаем null
+   * GET /api/v1/assets/{id}/risk-score (legacy)
+   * Возвращает { score: number } или null
    */
   static async getRiskScore(assetId) {
     try {
       const res = await this.request(`/api/v1/assets/${assetId}/risk-score`);
       if (!res || res.status === 404) return null;
       if (!res.ok) return null;
+      return res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GET /api/v1/assets/{id}/score — 11.A ScoreResult (6 категорий)
+   * @returns {object|null}
+   */
+  static async getAssetScore(assetId) {
+    try {
+      const res = await this.request(`/api/v1/assets/${assetId}/score`);
+      if (!res || !res.ok) return null;
+      return res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * GET /api/v1/assets/{id}/score/trend — ScoreTrendResponse
+   * @returns {object|null}
+   */
+  static async getAssetScoreTrend(assetId) {
+    try {
+      const res = await this.request(`/api/v1/assets/${assetId}/score/trend`);
+      if (!res || !res.ok) return null;
       return res.json();
     } catch {
       return null;
@@ -430,6 +458,23 @@ class API {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${res?.status}`);
     }
+    return res.json();
+  }
+
+  /** GET /api/v1/events/{id} — полный объект события с remediation_hints */
+  static async getEventDetail(eventId) {
+    const res = await this.request(`/api/v1/events/${encodeURIComponent(eventId)}`);
+    if (!res || !res.ok) throw new Error(`Ошибка event detail: ${res?.status}`);
+    return res.json();
+  }
+
+  /** PATCH /api/v1/events/{id}/resolve — отметить устранённым */
+  static async resolveEvent(eventId) {
+    const res = await this.request(`/api/v1/events/${encodeURIComponent(eventId)}/resolve`, {
+      method: 'PATCH',
+      body: JSON.stringify({}),
+    });
+    if (!res || !res.ok) throw new Error(`Ошибка resolve: ${res?.status}`);
     return res.json();
   }
 
@@ -869,6 +914,242 @@ function escapeHtml(str) {
 }
 
 // ─────────────────────────────────────────────
+// 11.C: Executive Dashboard
+// ─────────────────────────────────────────────
+
+/** Человекочитаемые названия категорий. */
+const CAT_LABELS = {
+  network_security:     'Network',
+  dns_health:           'DNS Health',
+  application_security: 'App Security',
+  credential_exposure:  'Credentials',
+  dark_web_presence:    'Dark Web',
+  brand_safety:         'Brand Safety',
+};
+
+/** Иконки категорий. */
+const CAT_ICONS = {
+  network_security:     '🌐',
+  dns_health:           '🔒',
+  application_security: '⚙️',
+  credential_exposure:  '🔑',
+  dark_web_presence:    '🕵️',
+  brand_safety:         '🛡️',
+};
+
+/**
+ * Рендерит Executive Dashboard: главный gauge, grade, 6 мини-gauge, Top 5, Trend.
+ * @param {object|null} scoreData  — ответ /api/v1/assets/{id}/score (ScoreResult)
+ * @param {object|null} trendData  — ответ /api/v1/assets/{id}/score/trend (ScoreTrendResponse)
+ * @param {Array}       topEvents  — последние critical/high события (массив Event)
+ */
+function renderExecDashboard(scoreData, trendData, topEvents) {
+  // ── Главный gauge ──────────────────────────────────────────────────────
+  const total = scoreData ? scoreData.total : null;
+  const gaugeContainer = document.getElementById('risk-score-gauge');
+  if (gaugeContainer) {
+    if (total === null) {
+      gaugeContainer.innerHTML = _buildGaugeSvg(0).replace('0</text>', '—</text>');
+    } else {
+      gaugeContainer.innerHTML = _buildGaugeSvg(0);
+      setTimeout(() => { gaugeContainer.innerHTML = _buildGaugeSvg(total); }, 50);
+    }
+    gaugeContainer.setAttribute('aria-label', `Risk Score: ${total ?? 'нет данных'}`);
+  }
+
+  // ── Grade + industry badge ─────────────────────────────────────────────
+  const gradeEl = document.getElementById('exec-grade');
+  const badgeEl = document.getElementById('exec-industry-badge');
+  if (gradeEl) {
+    const grade = scoreData?.grade ?? '—';
+    gradeEl.textContent = grade;
+    const gradeColors = { A:'#10b981', B:'#3fb950', C:'#f59e0b', D:'#f0883e', F:'#ef4444', '—':'#888' };
+    gradeEl.style.color = gradeColors[grade] || '#eee';
+  }
+  if (badgeEl) {
+    const INDUSTRY_AVG = 62; // хардкод из BRD до 13.F
+    if (total !== null) {
+      const diff = total - INDUSTRY_AVG;
+      if (diff > 0) {
+        badgeEl.textContent = `+${diff} vs. отрасль`;
+        badgeEl.style.color = '#10b981';
+      } else if (diff < 0) {
+        badgeEl.textContent = `${diff} vs. отрасль`;
+        badgeEl.style.color = '#ef4444';
+      } else {
+        badgeEl.textContent = '= среднее по отрасли';
+        badgeEl.style.color = '#888';
+      }
+    } else {
+      badgeEl.textContent = '';
+    }
+  }
+
+  // ── 6 мини-gauge категорий ─────────────────────────────────────────────
+  const catGrid = document.getElementById('exec-cat-grid');
+  if (catGrid) {
+    const categories = scoreData?.categories ?? {};
+    const order = ['network_security','dns_health','application_security',
+                   'credential_exposure','dark_web_presence','brand_safety'];
+    catGrid.innerHTML = order.map(cat => {
+      const cat_score = categories[cat]?.score ?? null;
+      const label = CAT_LABELS[cat] || cat;
+      const icon  = CAT_ICONS[cat] || '●';
+      const scoreStr = cat_score !== null ? cat_score : '—';
+      const color = cat_score === null ? '#888'
+                  : cat_score >= 75    ? '#10b981'
+                  : cat_score >= 40    ? '#f59e0b'
+                  :                      '#ef4444';
+      const mini = cat_score !== null ? _buildMiniGaugeSvg(cat_score) : _buildMiniGaugeSvg(0);
+      return `<div class="exec-cat-card">
+        ${mini}
+        <div class="exec-cat-info">
+          <div class="exec-cat-name">${icon} ${label}</div>
+          <div class="exec-cat-score" style="color:${color}">${scoreStr}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Top 5 Risks ────────────────────────────────────────────────────────
+  _renderTop5Risks(topEvents || []);
+
+  // ── Score Trend ────────────────────────────────────────────────────────
+  _renderScoreTrend(trendData);
+}
+
+/**
+ * Рендерит Top 5 critical/high событий.
+ * @param {Array} events
+ */
+function _renderTop5Risks(events) {
+  const container = document.getElementById('exec-top-risks-list');
+  if (!container) return;
+
+  const top = events
+    .filter(e => e.severity === 'critical' || e.severity === 'high')
+    .slice(0, 5);
+
+  if (!top.length) {
+    container.innerHTML = `<div style="color:var(--text-muted);font-size:.8rem;padding:8px 0">
+      Нет критических рисков — отлично!
+    </div>`;
+    return;
+  }
+
+  const sevColors = { critical:'#ef4444', high:'#f0883e', medium:'#f59e0b', low:'#3fb950' };
+  const catByType = {};
+  Object.entries({
+    network_security:     ['port_scan','exposed_service','vulnerability','open_s3_bucket','subdomain_takeover'],
+    dns_health:           ['domain_hardening'],
+    application_security: ['tech_profile','tls_fingerprint','tls_expiry'],
+    credential_exposure:  ['stealer_log','credential_leak','github_secret_leak','email_breach','active_session_leak'],
+    dark_web_presence:    ['darknet_mention','ransomware_mention','paste_mention','telegram_leak','forum_mention'],
+    brand_safety:         ['phishing_domain'],
+  }).forEach(([cat, types]) => types.forEach(t => { catByType[t] = cat; }));
+
+  container.innerHTML = top.map(ev => {
+    const color = sevColors[ev.severity] || '#888';
+    const cat   = catByType[ev.event_type] || 'network_security';
+    const icon  = CAT_ICONS[cat] || '⚠️';
+    const domain = ev.target_domain || ev.asset_id || '—';
+    return `<div class="exec-risk-item">
+      <span class="exec-risk-icon">${icon}</span>
+      <div class="exec-risk-body">
+        <div class="exec-risk-type" style="color:${color}">${escapeHtml(ev.event_type)}</div>
+        <div class="exec-risk-meta">${escapeHtml(domain)} · ${ev.severity}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/**
+ * Рендерит SVG sparkline тренда score.
+ * Строит 3-точечный спарклайн из score_30d_ago → score_7d_ago → current_score.
+ * @param {object|null} trendData — ScoreTrendResponse
+ */
+function _renderScoreTrend(trendData) {
+  const chart = document.getElementById('exec-trend-chart');
+  const meta  = document.getElementById('exec-trend-meta');
+  if (!chart) return;
+
+  if (!trendData || trendData.current_score === undefined) {
+    chart.innerHTML = `<div style="color:var(--text-muted);font-size:.8rem;padding:8px 0">
+      Недостаточно данных для тренда
+    </div>`;
+    if (meta) meta.innerHTML = '';
+    return;
+  }
+
+  // Строим точки из доступных полей API
+  const rawPts = [
+    trendData.score_30d_ago,
+    trendData.score_7d_ago,
+    trendData.current_score,
+  ].filter(v => v !== null && v !== undefined);
+
+  if (rawPts.length < 2) {
+    chart.innerHTML = `<div style="color:var(--text-muted);font-size:.8rem;padding:8px 0">
+      Недостаточно данных (нужно ≥ 2 снимка)
+    </div>`;
+    if (meta) meta.innerHTML = '';
+    return;
+  }
+
+  const pts = rawPts;
+  const W = 320, H = 70;
+  const minPts = Math.min(...pts);
+  const maxPts = Math.max(...pts);
+  const range  = maxPts - minPts || 1;
+  const step   = W / (pts.length - 1);
+
+  const coords = pts.map((s, i) => {
+    const x = i * step;
+    const y = H - ((s - minPts) / range) * (H - 10) - 5;
+    return [x, y];
+  });
+
+  const pathD = coords.map(([x,y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const lastScore = pts[pts.length - 1];
+  const lineColor = lastScore >= 75 ? '#10b981' : lastScore >= 40 ? '#f59e0b' : '#ef4444';
+
+  chart.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}"
+      preserveAspectRatio="none" style="display:block">
+    <defs>
+      <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${lineColor}" stop-opacity=".25"/>
+        <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="${pathD} L${W},${H} L0,${H} Z"
+      fill="url(#trendGrad)"/>
+    <path d="${pathD}"
+      fill="none" stroke="${lineColor}" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${coords[coords.length-1][0].toFixed(1)}"
+            cy="${coords[coords.length-1][1].toFixed(1)}"
+            r="3" fill="${lineColor}"/>
+  </svg>`;
+
+  if (meta) {
+    const d7  = trendData.delta_7d;
+    const d30 = trendData.delta_30d;
+    const fmtDelta = d => {
+      if (d === null || d === undefined) return '';
+      const cls = d > 0 ? 'exec-trend-delta-up' : d < 0 ? 'exec-trend-delta-down' : 'exec-trend-delta-flat';
+      return `<span class="${cls}">${d > 0 ? '+' : ''}${d}</span>`;
+    };
+    meta.innerHTML = [
+      d7  !== undefined ? `7d: ${fmtDelta(d7)}`  : '',
+      d30 !== undefined ? `30d: ${fmtDelta(d30)}` : '',
+      trendData.velocity !== undefined
+        ? `<span style="color:var(--text-muted)">${trendData.velocity > 0 ? '+' : ''}${trendData.velocity} pts/day</span>`
+        : '',
+    ].filter(Boolean).join(' · ');
+  }
+}
+
+// ─────────────────────────────────────────────
 // TAB: Dashboard
 // ─────────────────────────────────────────────
 
@@ -877,17 +1158,26 @@ async function renderDashboard() {
     const stats = await API.getStats();
     renderStats(stats);
 
-    // Последние события для таблицы
-    const events = await API.getEvents({ limit: 10 });
-    renderRecentEvents(events);
+    // Последние события для таблицы и Top 5 Risks
+    const events = await API.getEvents({ limit: 50 });
+    renderRecentEvents(events.slice ? events.slice(0, 10) : events);
 
-    // Если есть активы — берём risk score первого
+    // 11.C: Executive Dashboard — score + trend параллельно
     if (State.assetsData && State.assetsData.length > 0) {
-      const data = await API.getRiskScore(State.assetsData[0].id);
-      // 9.H.4: передаём breakdown для отображения условий устранения
-      renderRiskScore(data ? data.score : null, data ? data.breakdown : null);
+      const assetId = State.assetsData[0].id;
+      const [scoreData, trendData] = await Promise.all([
+        API.getAssetScore(assetId),
+        API.getAssetScoreTrend(assetId),
+      ]);
+      renderExecDashboard(
+        scoreData,
+        trendData,
+        Array.isArray(events) ? events : [],
+      );
+      // 9.H.4 breakdown (legacy)
+      if (scoreData) _renderRiskBreakdown([]);
     } else {
-      renderRiskScore(null, null);
+      renderExecDashboard(null, null, []);
     }
   } catch (e) {
     Toast.show('error', 'Ошибка загрузки', e.message);
@@ -988,12 +1278,63 @@ function renderRecentEvents(events) {
   }).join('');
 }
 
-/** Раскрыть/закрыть строку таблицы с payload */
+/** Раскрыть/закрыть строку таблицы с payload + remediation hints */
 function toggleEventRow(tr) {
   const id = tr.dataset.id;
   const detailRow = document.getElementById(`detail-${id}`);
   if (!detailRow) return;
   detailRow.classList.toggle('open');
+
+  if (detailRow.classList.contains('open') && !detailRow.dataset.loaded) {
+    detailRow.dataset.loaded = '1';
+    _loadEventDetail(id, detailRow);
+  }
+}
+
+async function _loadEventDetail(id, detailRow) {
+  try {
+    const ev = await API.getEventDetail(id);
+    const td = detailRow.querySelector('td');
+    if (!td) return;
+
+    // Строим блок remediation hints
+    const hints = Array.isArray(ev.remediation_hints) ? ev.remediation_hints : [];
+    const hintsHtml = hints.length
+      ? `<div class="remediation-block">
+           <div class="remediation-title">Как устранить</div>
+           <ol class="remediation-steps">
+             ${hints.map(h => `<li>${escHtml(h)}</li>`).join('')}
+           </ol>
+         </div>`
+      : '';
+
+    // Кнопка «Устранить» только если ещё не resolved
+    const resolveBtn = ev.resolved
+      ? `<span class="resolve-done">✓ Устранено ${ev.resolved_at ? fmtDate(ev.resolved_at) : ''}</span>`
+      : `<button class="btn-resolve" onclick="resolveEvent('${escHtml(id)}')">✓ Отметить устранённым</button>`;
+
+    // Добавляем hints + кнопку после уже имеющегося payload-контента
+    td.insertAdjacentHTML('beforeend', hintsHtml + `<div class="resolve-row">${resolveBtn}</div>`);
+  } catch {
+    // При ошибке загрузки detail молчим — payload уже показан
+  }
+}
+
+/** Глобальный хендлер кнопки «Устранить» */
+async function resolveEvent(id) {
+  const btn = document.querySelector(`.btn-resolve[onclick*="${id}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Сохранение…'; }
+  try {
+    const ev = await API.resolveEvent(id);
+    if (btn) {
+      const row = btn.closest('.resolve-row');
+      if (row) row.innerHTML = `<span class="resolve-done">✓ Устранено ${ev.resolved_at ? fmtDate(ev.resolved_at) : ''}</span>`;
+    }
+    Toast.show('success', 'Событие отмечено как устранённое');
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Отметить устранённым'; }
+    Toast.show('error', `Ошибка: ${e.message}`);
+  }
 }
 
 // ─────────────────────────────────────────────

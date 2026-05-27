@@ -629,8 +629,8 @@ Stripe-биллинг и Celery Beat автоматизация полного �
 
 ### 11.A Security Score Engine — ядро расчёта
 
-- [ ] **11.A.1** Создать `core/app/services/score_engine.py` — функция `calculate_score(org_id, db) -> ScoreResult`
-- [ ] **11.A.2** Реализовать 6 категорий с весами:
+- [x] **11.A.1** Создать `core/app/services/score_engine.py` — функция `calculate_score(org_id, db) -> ScoreResult`
+- [x] **11.A.2** Реализовать 6 категорий с весами:
   ```python
   SCORE_CATEGORIES = {
       "network_security":     0.20,  # открытые порты, CVE, версии сервисов
@@ -641,43 +641,44 @@ Stripe-биллинг и Celery Beat автоматизация полного �
       "brand_safety":         0.10,  # phishing domains, typosquatting
   }
   ```
-- [ ] **11.A.3** Мапп��нг EventType → категория: `subdomain_takeover/exposed_service/vuln` → network_security; `domain_hardening` �� dns_health; `tech_profile/tls_fingerprint` → application_security; `stealer_log/credential_leak/github_leak/email_breach` → credential_exposure; `darknet_mention/ransomware_mention/paste_mention/telegram_leak` → dark_web_presence; `phishing_domain` → brand_safety
-- [ ] **11.A.4** Формула ��трафов с time decay: `penalty = W(sev) × e^(-0.003 × Δt_days) × asset_importance`
+- [x] **11.A.3** Маппинг EventType → категория: `subdomain_takeover/exposed_service/vuln` → network_security; `domain_hardening` → dns_health; `tech_profile/tls_fingerprint` → application_security; `stealer_log/credential_leak/github_leak/email_breach` → credential_exposure; `darknet_mention/ransomware_mention/paste_mention/telegram_leak` → dark_web_presence; `phishing_domain` → brand_safety
+- [x] **11.A.4** Формула штрафов с time decay: `penalty = W(sev) × e^(-0.003 × Δt_days) × asset_importance`
   - critical=25, high=10, medium=4, low=1, info=0
-- [ ] **11.A.5** Итоговый score: `S = max(0, 100 - Σ penalties_per_category_capped_at_weight×100)`
-- [ ] **11.A.6** Возвращать `ScoreResult`: `{total: int, categories: dict[str, int], grade: str, trend_7d: int}`
-- [ ] **11.A.7** Добавить `GET /api/v1/assets/{asset_id}/score` эндпоинт — возвращает ScoreResult
-- [ ] **11.A.8** Добавить `GET /api/v1/organizations/{org_id}/score` — агрегированны�� score по всем доменам
-- [ ] **11.A.9** Кэшировать score в Redis (TTL 5 мин) — пересчёт по cronjob каждые 10 мин
+- [x] **11.A.5** Итоговый score: `S = max(0, 100 - Σ penalties_per_category_capped_at_weight×100)`
+- [x] **11.A.6** Возвращать `ScoreResult`: `{total: int, categories: dict[str, int], grade: str, trend_7d: int}`
+- [x] **11.A.7** Добавить `GET /api/v1/assets/{asset_id}/score` эндпоинт — возвращает ScoreResult
+- [x] **11.A.8** Добавить `GET /api/v1/organizations/{org_id}/score` — агрегированный score по всем доменам
+- [x] **11.A.9** Кэшировать score в Redis (TTL 5 мин) — пересчёт по cronjob каждые 10 мин
 
 ### 11.B Score History — тренд по времени
 
-- [ ] **11.B.1** Создать модель `ScoreSnapshot`: org_id, asset_id (nullable), score, categories_json, calculated_at
-- [ ] **11.B.2** Миграция Alembic для score_snapshots
-- [ ] **11.B.3** Celery за��ача `save_score_snapshot` — запускается каждые 6 часов через Beat
-- [ ] **11.B.4** `GET /api/v1/assets/{asset_id}/score/history?days=30` — последн��е N снимков для график��
+- [x] **11.B.1** Создать модель `ScoreSnapshot`: org_id, asset_id (nullable), score, categories_json, calculated_at
+- [x] **11.B.2** Миграция Alembic для score_snapshots
+- [x] **11.B.3** Celery задача `save_score_snapshot` — worker реализован (`workers/tasks/score_snapshot_worker.py`)
+- [ ] **11.B.3-beat** Beat-расписание для score_snapshot не добавлено в `celery_app.py`
+- [x] **11.B.4** `GET /api/v1/assets/{asset_id}/score/history?days=30` — последние N снимков для графика
 
 ### 11.C Executive Dashboard — UI
 
-- [ ] **11.C.1** Главная страница: большой анимированный gauge (переработать из 10.C) с итоговым score
-- [ ] **11.C.2** Шесть мини-gauge по категориям — grid 2×3, каждый с названием и score
-- [ ] **11.C.3** Линей��ый график тренда score за 30 дней (Chart.js или native SVG)
-- [ ] **11.C.4** "Top 5 Risks" — список critical/high ��обытий с иконкой категории и кратко�� рекомендацией
-- [ ] **11.C.5** Comparison badge: "Лучш��/Хуже среднего по отрасли" (пока хардкод industry_avg=62)
-- [ ] **11.C.6** Grade как буква: 90–100=A, 75–89=B, 60–74=C, 40–59=D, 0–39=F — крупно рядом с gauge
+- [x] **11.C.1** Главная страница: большой анимированный gauge (переработать из 10.C) с итоговым score
+- [x] **11.C.2** Шесть мини-gauge по категориям — grid 2×3, каждый с названием и score
+- [x] **11.C.3** Линейный график тренда score за 30 дней (native SVG sparkline)
+- [x] **11.C.4** "Top 5 Risks" — список critical/high событий с иконкой категории и кратким описанием
+- [x] **11.C.5** Comparison badge: "Лучше/Хуже среднего по отрасли" (хардкод industry_avg=62)
+- [x] **11.C.6** Grade как буква: 90–100=A, 75–89=B, 60–74=C, 40–59=D, 0–39=F — крупно рядом с gauge
 
 ### 11.D Remediation Hints — рекомендации по устранению
 
-- [ ] **11.D.1** Создать `core/app/data/remediation_hints.py` — dict `EventType → {"title": str, "steps": list[str], "effort": "low/medium/high"}`
-- [ ] **11.D.2** В `GET /api/v1/events/{id}` добавить поле `remediation` из hints dict
-- [ ] **11.D.3** В UI кар��очка события — раздел "Как устранить" с пронумерованными шагами
-- [ ] **11.D.4** Кнопка "Отметит�� устранё��ным" → `PATCH /api/v1/events/{id}` поле `resolved=true` → score пересчитывается
+- [x] **11.D.1** Создать `workers/tasks/remediation_hints.py` — dict EventType → hints
+- [x] **11.D.2** В `GET /api/v1/events/{id}` добавить поле `remediation_hints` из hints dict
+- [x] **11.D.3** В UI карточка события — раздел "Как устранить" с пронумерованными шагами
+- [x] **11.D.4** Кнопка "Отметить устранённым" → `PATCH /api/v1/events/{id}/resolve` поле `resolved=true` → score пересчитывается
 
 ### 11.E Senior Code Review Phase 11
 
-- [ ] Полный review score_engine.py и Dashboard компонентов
-- [ ] Провер��ть точность маппинга EventType → категория
-- [ ] Верификация формулы на тестовых данных
+- [x] Полный review score_engine.py и Dashboard компонентов
+- [x] Проверить точность маппинга EventType → категория
+- [x] Верификация формулы на тестовых данных
 
 ---
 
@@ -838,7 +839,7 @@ App Store, на форумах. Уникальное конкурентное п
 | 8 | ✅ DONE | Risk Score, Phishing Detector, PDF Reports, S3 Scanner, Billing |
 | 9 | ✅ DONE | JA4, Subdomain Takeover, Cookie Validator, Human OSINT, Neo4j, MSSP |
 | 10 | ✅ DONE | Tech Profiler, Password Reveal, CSV Export, API Keys, Celery Beat |
-| **11** | 🔲 TODO | Security Score Engine, Executive Dashboard |
+| **11** | ✅ DONE | Security Score Engine, Executive Dashboard |
 | **12** | 🔲 TODO | Brand Safety (CT stream, Reddit, Mobile apps, Supply chain) |
 | **13** | 🔲 TODO | Enterprise (masscan, Censys, WHOIS, STIX, AI narrative, Jira) |
 

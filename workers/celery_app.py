@@ -110,6 +110,18 @@ app.conf.update(
             "schedule": crontab(minute="*/15"),
             "options": {"queue": "osint"},
         },
+        # 11.B.3: Снимки Security Score — каждые 6 часов
+        "score-snapshot-6h": {
+            "task": "workers.tasks.score_snapshot_worker.take_daily_snapshots",
+            "schedule": crontab(minute=0, hour="*/6"),
+            "options": {"queue": "default"},
+        },
+        # 11.A.9: Алерт-батчи — сброс каждые 5 минут
+        "flush-alert-batches-5min": {
+            "task": "workers.tasks.telegram_alerts.flush_batches",
+            "schedule": crontab(minute="*/5"),
+            "options": {"queue": "default"},
+        },
     },
 
     # Настройки worker

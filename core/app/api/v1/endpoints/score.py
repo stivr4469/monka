@@ -16,6 +16,7 @@ from app.api.deps import CurrentUser, DBDep
 from app.models.asset import Asset
 from app.models.organization import Organization
 from app.models.score_snapshot import ScoreSnapshot
+from app.services.score_cache import score_cache_get, score_cache_set
 from app.services.score_engine import ScoreResult, calculate_score
 from app.services.score_trends import TrendDirection, compute_score_trend
 
@@ -72,17 +73,23 @@ async def get_asset_score(
     if asset is None or asset.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Актив не найден")
 
+    cache_key = f"asset:{asset_id}"
+    cached = await score_cache_get(cache_key)
+    if cached is not None:
+        return ScoreResult.model_validate(cached)
+
     result = await calculate_score(
         org_id=current_user.organization_id,
         db=db,
         asset_id=asset_id,
     )
 
+    await score_cache_set(cache_key, result.model_dump(mode="json"))
+
     # Сохраняем snapshot — не блокируем ответ при ошибке записи
     try:
         await _save_snapshot(result, db)
     except Exception:
-        # Если snapshot не сохранился — всё равно возвращаем результат
         pass
 
     return result
@@ -115,11 +122,18 @@ async def get_org_score(
     if org_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Организация не найдена")
 
+    cache_key = f"org:{org_id}"
+    cached = await score_cache_get(cache_key)
+    if cached is not None:
+        return ScoreResult.model_validate(cached)
+
     result = await calculate_score(
         org_id=org_id,
         db=db,
         asset_id=None,
     )
+
+    await score_cache_set(cache_key, result.model_dump(mode="json"))
 
     # Сохраняем org-level snapshot
     try:

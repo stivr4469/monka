@@ -19,6 +19,7 @@ from sqlalchemy.sql import Select
 
 from app.api.deps import CurrentUser, DBDep
 from app.core.config import settings
+from app.services.score_cache import score_cache_invalidate
 from app.core.crypto import decrypt_password
 from app.models.asset import Asset
 from app.models.event import Event
@@ -476,6 +477,11 @@ async def resolve_event(
     await db.commit()
     await db.refresh(event)
 
+    # Сбрасываем кеш score — resolved=True влияет на расчёт
+    if event.asset_id and current_user.organization_id:
+        await score_cache_invalidate(f"asset:{event.asset_id}")
+        await score_cache_invalidate(f"org:{current_user.organization_id}")
+
     read = EventRead.model_validate(event)
     read.remediation_hints = _get_hints(event.event_type)
     return read.model_dump()
@@ -501,3 +507,22 @@ async def event_hints(
         "event_type": event.event_type,
         "hints": _get_hints(event.event_type),
     }
+
+
+@router.get("/{event_id}", summary="Получить событие по ID")
+async def get_event(
+    event_id: str,
+    db: DBDep,
+    current_user: CurrentUser,
+) -> dict:
+    """
+    11.D.3: Возвращает полный объект события включая remediation_hints.
+    Доступ ограничен событиями СВОЕЙ организации.
+    """
+    if current_user.organization_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет организации")
+
+    event = await _get_org_event(event_id, current_user.organization_id, db)
+    read = EventRead.model_validate(event)
+    read.remediation_hints = _get_hints(event.event_type)
+    return read.model_dump()
