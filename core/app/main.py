@@ -150,7 +150,7 @@ async def liveness() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/health", tags=["health"])
+@app.get("/health", tags=["health"], response_model=None)
 async def health(db: Annotated[AsyncSession, Depends(get_db)]) -> JSONResponse | dict:
     """Проверяет доступность сервиса и соединение с БД."""
     try:

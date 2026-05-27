@@ -323,6 +323,7 @@ def test_dispatch_alerts_multiple_matching_rules():
     """
     Если несколько правил совпадают с событием — алерт отправляется в каждое.
     Например, одно правило общее (target_domain=None), второе конкретное.
+    Используем severity=high чтобы попасть в immediate-путь (минуя батчинг).
     """
     rules = [
         _make_rule(target_domain=None, telegram_chat_id="-111", min_severity="info"),
@@ -330,7 +331,7 @@ def test_dispatch_alerts_multiple_matching_rules():
         _make_rule(target_domain="other.com", telegram_chat_id="-333", min_severity="info"),
     ]
 
-    event = _make_event(target_domain="example.com", severity="medium")
+    event = _make_event(target_domain="example.com", severity="high")
 
     with patch("httpx.get", return_value=_rules_response(rules)), \
          patch("httpx.post", return_value=_ok_telegram_response()) as mock_post:

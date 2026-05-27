@@ -437,7 +437,7 @@ class TestScanGithubResults:
     def test_нет_репозиториев(self):
         """Если поиск ничего не нашёл — возвращаем нули."""
         with patch("tasks.gitleaks.install_gitleaks", return_value="/tmp/gitleaks"), \
-             patch("tasks.gitleaks._collect_repos_from_search", return_value=set()):
+             patch("tasks.gitleaks._collect_repos_from_search", return_value=(set(), 0)):
             result = scan_github_results(
                 domain="clean.com",
                 github_token="token",
@@ -463,7 +463,7 @@ class TestScanGithubResults:
         scan_iter = iter(scan_results)
 
         with patch("tasks.gitleaks.install_gitleaks", return_value="/tmp/gitleaks"), \
-             patch("tasks.gitleaks._collect_repos_from_search", return_value=repos), \
+             patch("tasks.gitleaks._collect_repos_from_search", return_value=(repos, 0)), \
              patch("tasks.gitleaks.scan_github_repo", side_effect=lambda **kw: next(scan_iter)):
             result = scan_github_results(
                 domain="example.com",
