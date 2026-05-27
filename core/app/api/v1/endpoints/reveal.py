@@ -1,11 +1,11 @@
 """
-Расшифровка зашифрованных паролей из стилер-логов + Audit Log (задача 10.B).
+Расшифровка зашифрованных паролей/секретов из стилер-логов и gitleaks + Audit Log (задача 10.B).
 
-GET  /api/v1/events/{event_id}/reveal  — расшифровывает password_enc, пишет audit_log.
+GET  /api/v1/events/{event_id}/reveal  — расшифровывает password_enc / secret_enc, пишет audit_log.
 GET  /api/v1/audit-logs                — список аудит-записей (только superuser).
 
 Требования безопасности:
-- Только для событий с source_type in (stealer, stealer_log, breach)
+- Только для событий с source_type in (stealer, stealer_log, breach, gitleaks)
 - Только для пользователей с plan=professional или plan=enterprise (или superuser)
 - Каждый успешный вызов фиксируется в audit_logs
 - Результат содержит expires_in_seconds=30 (UI должен скрыть пароль через 30с)
@@ -26,19 +26,20 @@ from app.models.organization import Organization
 
 router = APIRouter(tags=["reveal"])
 
-# Типы событий, которые могут содержать зашифрованный пароль
-_STEALER_SOURCE_TYPES = frozenset({"stealer", "stealer_log", "breach"})
+# Типы источников, которые могут содержать зашифрованные секреты/пароли
+_STEALER_SOURCE_TYPES = frozenset({"stealer", "stealer_log", "breach", "gitleaks"})
 
 # Тарифные планы, которым доступна функция расшифровки
 _ALLOWED_PLANS = frozenset({"professional", "enterprise"})
 
 
 class RevealResponse(BaseModel):
-    """Ответ с расшифрованным паролем."""
+    """Ответ с расшифрованным секретом (пароль из стилер-лога или секрет из gitleaks)."""
     event_id: str
-    password: str
-    login: str
-    url: str
+    password: str = ""
+    secret: str = ""
+    login: str = ""
+    url: str = ""
     expires_in_seconds: int = 30
 
 
@@ -169,40 +170,52 @@ async def reveal_password(
             ),
         )
 
-    # Извлекаем зашифрованный пароль из payload
+    # Извлекаем зашифрованный секрет из payload
     payload = event.payload or {}
-    password_enc = payload.get("password_enc", "")
-    if not password_enc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Зашифрованный пароль не найден в payload события",
+    is_gitleaks = event.source_type == "gitleaks"
+
+    enc_token = payload.get("secret_enc", "") if is_gitleaks else payload.get("password_enc", "")
+    if not enc_token:
+        detail = (
+            "Зашифрованный секрет не найден в payload (перезапустите сканирование)"
+            if is_gitleaks
+            else "Зашифрованный пароль не найден в payload события"
         )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
     # Расшифровываем через Fernet (SHA-256 ключ из INTERNAL_API_SECRET)
     try:
-        password = decrypt_password(password_enc, settings.INTERNAL_API_SECRET)
+        decrypted = decrypt_password(enc_token, settings.INTERNAL_API_SECRET)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Зашифрованный пароль не найден (не удалось расшифровать)",
+            detail="Не удалось расшифровать секрет",
         )
 
     # Записываем факт обращения в audit_log
     ip = _get_client_ip(request)
     ua = request.headers.get("User-Agent")
+    audit_action = "reveal_secret" if is_gitleaks else "reveal_password"
     await _write_audit(
         db,
         user_id=current_user.id,
-        action="reveal_password",
+        action=audit_action,
         target_id=event_id,
         ip_address=ip,
         user_agent=ua,
     )
     await db.commit()
 
+    if is_gitleaks:
+        return RevealResponse(
+            event_id=event_id,
+            secret=decrypted,
+            url=payload.get("repo_url", ""),
+            expires_in_seconds=30,
+        )
     return RevealResponse(
         event_id=event_id,
-        password=password,
+        password=decrypted,
         login=payload.get("login", ""),
         url=payload.get("url", ""),
         expires_in_seconds=30,

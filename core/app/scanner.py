@@ -90,7 +90,7 @@ def run_nuclei(target: str, root_domain: str, port: int = 8000) -> None:
             "-bulk-size", "10",
             "-concurrency", "10",
         ],
-        timeout=60,
+        timeout=300,
     )
 
     sent = 0

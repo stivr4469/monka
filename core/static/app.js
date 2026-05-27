@@ -299,13 +299,10 @@ class API {
    */
   static async startScan(module, domain) {
     const paths = {
-      subfinder: '/api/v1/assets/',
+      subfinder: '/api/v1/scan/subfinder',
       github:    '/api/v1/scan/github',
       paste:     '/api/v1/scan/paste',
     };
-    if (module === 'subfinder') {
-      return this.createAsset({ domain });
-    }
     const path = paths[module];
     if (!path) throw new Error(`Неизвестный модуль: ${module}`);
     const res = await this.request(path, {
@@ -1651,27 +1648,57 @@ function stopEventsPolling() {
   }
 }
 
-function _payloadHtml(ev) {
-  if (ev.event_type !== 'stealer_log') {
-    return `<pre class="json-pre">${escHtml(prettyJson(ev.payload))}</pre>`;
+let _darknetPollTimer = null;
+
+function stopDarknetPolling() {
+  if (_darknetPollTimer) {
+    clearInterval(_darknetPollTimer);
+    _darknetPollTimer = null;
   }
-  // Stealer-log: показываем login/url открыто, пароль скрыт
+}
+
+function _payloadHtml(ev) {
   const p = ev.payload || {};
-  const hasEnc = !!p.password_enc;
-  return `
-    <div style="display:grid;gap:.35rem;font-size:.8125rem;font-family:var(--font-mono)">
-      <div><span style="color:var(--text-muted)">URL:   </span><span>${escHtml(p.url || '—')}</span></div>
-      <div><span style="color:var(--text-muted)">Login: </span><span>${escHtml(p.login || '—')}</span></div>
-      <div style="display:flex;align-items:center;gap:.6rem">
-        <span style="color:var(--text-muted)">Pass:  </span>
-        <span id="pwd-${escHtml(ev.id)}">***</span>
-        ${hasEnc ? `<button class="btn btn-secondary btn-sm"
-          style="font-size:.75rem;padding:.15rem .5rem"
-          onclick="revealPassword('${escHtml(ev.id)}')">Показать</button>` : ''}
-      </div>
-      ${p.source_file ? `<div><span style="color:var(--text-muted)">File:  </span><span>${escHtml(p.source_file)}</span></div>` : ''}
-      ${p.channel    ? `<div><span style="color:var(--text-muted)">Chan:  </span><span>${escHtml(p.channel)}</span></div>` : ''}
-    </div>`;
+
+  if (ev.event_type === 'stealer_log') {
+    const hasEnc = !!p.password_enc;
+    return `
+      <div style="display:grid;gap:.35rem;font-size:.8125rem;font-family:var(--font-mono)">
+        <div><span style="color:var(--text-muted)">URL:   </span><span>${escHtml(p.url || '—')}</span></div>
+        <div><span style="color:var(--text-muted)">Login: </span><span>${escHtml(p.login || '—')}</span></div>
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <span style="color:var(--text-muted)">Pass:  </span>
+          <span id="pwd-${escHtml(ev.id)}">***</span>
+          ${hasEnc ? `<button class="btn btn-secondary btn-sm"
+            style="font-size:.75rem;padding:.15rem .5rem"
+            onclick="revealPassword('${escHtml(ev.id)}')">Показать</button>` : ''}
+        </div>
+        ${p.source_file ? `<div><span style="color:var(--text-muted)">File:  </span><span>${escHtml(p.source_file)}</span></div>` : ''}
+        ${p.channel    ? `<div><span style="color:var(--text-muted)">Chan:  </span><span>${escHtml(p.channel)}</span></div>` : ''}
+      </div>`;
+  }
+
+  if (ev.event_type === 'secret_leak') {
+    const hasEnc = !!p.secret_enc;
+    return `
+      <div style="display:grid;gap:.35rem;font-size:.8125rem;font-family:var(--font-mono)">
+        <div><span style="color:var(--text-muted)">Repo:   </span><span>${escHtml(p.repo_url || '—')}</span></div>
+        <div><span style="color:var(--text-muted)">Rule:   </span><span>${escHtml(p.rule_id || '—')}</span></div>
+        <div><span style="color:var(--text-muted)">Type:   </span><span>${escHtml(p.secret_type || '—')}</span></div>
+        <div><span style="color:var(--text-muted)">File:   </span><span>${escHtml(p.file || '—')}:${escHtml(String(p.line || ''))}</span></div>
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <span style="color:var(--text-muted)">Secret: </span>
+          <span id="pwd-${escHtml(ev.id)}">${escHtml(p.secret_masked || '***')}</span>
+          ${hasEnc ? `<button class="btn btn-secondary btn-sm"
+            style="font-size:.75rem;padding:.15rem .5rem"
+            onclick="revealSecret('${escHtml(ev.id)}')">Показать секрет</button>` : ''}
+        </div>
+        ${p.author ? `<div><span style="color:var(--text-muted)">Author: </span><span>${escHtml(p.author)}</span></div>` : ''}
+        ${p.commit ? `<div><span style="color:var(--text-muted)">Commit: </span><span>${escHtml(p.commit.slice(0, 12))}</span></div>` : ''}
+      </div>`;
+  }
+
+  return `<pre class="json-pre">${escHtml(prettyJson(ev.payload))}</pre>`;
 }
 
 function buildEventsTable(events) {
@@ -1760,6 +1787,55 @@ async function revealPassword(eventId) {
 
   } catch (err) {
     Toast.show('error', 'Ошибка расшифровки', err.message);
+    if (inlineBtn) inlineBtn.disabled = false;
+  }
+}
+
+/** Расшифровка секрета gitleaks — тот же модал, поле secret из API. */
+async function revealSecret(eventId) {
+  const inlineEl  = document.getElementById(`pwd-${eventId}`);
+  const inlineBtn = inlineEl && inlineEl.nextElementSibling;
+  if (inlineBtn) inlineBtn.disabled = true;
+
+  try {
+    const res  = await API.request(`/api/v1/events/${eventId}/reveal`);
+    if (!res) return;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+    const value = data.secret || data.password || '(пусто)';
+
+    const modal = document.getElementById('reveal-modal');
+    if (modal) {
+      const urlEl   = document.getElementById('reveal-url');
+      const loginEl = document.getElementById('reveal-login');
+      const pwdEl   = document.getElementById('reveal-password');
+      const cntEl   = document.getElementById('reveal-countdown');
+      if (urlEl)   urlEl.textContent  = data.url || '—';
+      if (loginEl) loginEl.textContent = '(секрет API)';
+      if (pwdEl)   pwdEl.textContent  = value;
+      modal.style.display = 'flex';
+      const seconds = data.expires_in_seconds || 30;
+      let remaining = seconds;
+      if (cntEl) cntEl.textContent = remaining;
+      clearTimeout(_revealTimer);
+      clearInterval(_revealCountdown);
+      _revealCountdown = setInterval(() => {
+        remaining -= 1;
+        if (cntEl) cntEl.textContent = Math.max(0, remaining);
+      }, 1000);
+      _revealTimer = setTimeout(() => closeRevealModal(), seconds * 1000);
+    }
+
+    if (inlineEl) {
+      inlineEl.textContent      = value;
+      inlineEl.dataset.revealed = '1';
+      inlineEl.style.color      = 'var(--sev-critical)';
+    }
+    if (inlineBtn) { inlineBtn.textContent = 'Скрыть'; inlineBtn.disabled = false; }
+
+  } catch (err) {
+    Toast.show('error', 'Ошибка расшифровки секрета', err.message);
     if (inlineBtn) inlineBtn.disabled = false;
   }
 }
@@ -2439,8 +2515,10 @@ async function handleDarknetScan() {
         </div>`;
     }
 
-    // Перезагружаем таблицу darknet-событий
+    // Перезагружаем таблицу darknet-событий и запускаем периодическое обновление
     await loadDarknetEvents(domain);
+    if (_darknetPollTimer) clearInterval(_darknetPollTimer);
+    _darknetPollTimer = setInterval(() => loadDarknetEvents(domain), 20000);
 
   } catch (e) {
     Toast.show('error', 'Ошибка запуска darknet-сканирования', e.message);
@@ -2728,15 +2806,23 @@ async function loadTechnologies() {
 
 const TAB_LOADERS = {
   dashboard: () => { renderDashboard(); startDashboardRefresh(); },
-  assets:    () => { stopDashboardRefresh(); stopEventsPolling(); renderAssets(); },
-  events:    () => { stopDashboardRefresh(); renderEvents(); },
-  alerts:    () => { stopDashboardRefresh(); stopEventsPolling(); renderAlerts(); },
-  scan:      () => { stopDashboardRefresh(); stopEventsPolling(); renderScan(); },
+  assets:    () => { stopDashboardRefresh(); stopEventsPolling(); stopDarknetPolling(); renderAssets(); },
+  events:    () => { stopDashboardRefresh(); stopDarknetPolling(); renderEvents(); },
+  alerts:    () => { stopDashboardRefresh(); stopEventsPolling(); stopDarknetPolling(); renderAlerts(); },
+  scan:      () => { stopDashboardRefresh(); stopEventsPolling(); stopDarknetPolling(); renderScan(); },
   darknet:   () => { stopDashboardRefresh(); stopEventsPolling(); renderDarknet(); },
   // MSSP (задача 9.F): перезагружаем при каждом переключении на вкладку
   mssp:      () => { stopDashboardRefresh(); stopEventsPolling(); loadMsspClients(); },
-  // Attack Graph (задача 9.E): показываем вкладку, данные загружаются по кнопке
-  graph:     () => { stopDashboardRefresh(); stopEventsPolling(); },
+  // Attack Graph (задача 9.E): восстанавливаем домен из localStorage при переключении
+  graph: () => {
+    stopDashboardRefresh();
+    stopEventsPolling();
+    const saved = localStorage.getItem('graph_domain');
+    if (saved) {
+      const inp = document.getElementById('graph-domain-input');
+      if (inp && !inp.value) inp.value = saved;
+    }
+  },
   // Human OSINT (задача 9.D): загружаем профили при переключении на вкладку
   employees: () => { stopDashboardRefresh(); stopEventsPolling(); loadEmployees(); },
   // Technology Profiling (задача 10.A)
@@ -3195,6 +3281,7 @@ async function loadAttackPaths() {
       </div>`;
     return;
   }
+  localStorage.setItem('graph_domain', domain);
 
   // Skeleton во время загрузки
   listEl.innerHTML = `
@@ -3304,6 +3391,7 @@ async function loadGraphVisualization() {
     container.style.display = 'none';
     return;
   }
+  localStorage.setItem('graph_domain', domain);
 
   // Показываем индикатор загрузки
   placeholder.textContent = 'Загрузка данных графа…';

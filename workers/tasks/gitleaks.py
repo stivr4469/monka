@@ -25,6 +25,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from workers.crypto import encrypt_password
+
 logger = logging.getLogger(__name__)
 
 # Celery-импорты ленивые — без них модуль можно импортировать в тестовом окружении
@@ -294,14 +296,14 @@ def _clone_repo(repo_url: str, target_dir: Path) -> None:
 
     try:
         result = subprocess.run(
-            ["git", "clone", "--depth=50", "--quiet", repo_url, str(target_dir)],
+            ["git", "clone", "--depth=10", "--quiet", repo_url, str(target_dir)],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=30,
             shell=False,  # ОБЯЗАТЕЛЬНО False — защита от инъекций
         )
     except subprocess.TimeoutExpired:
-        raise _CloneError(f"Таймаут клонирования {repo_url} (60s)")
+        raise _CloneError(f"Таймаут клонирования {repo_url} (30s)")
     except FileNotFoundError:
         raise _CloneError("git не установлен")
     except OSError as exc:
@@ -335,11 +337,10 @@ def _run_gitleaks(
                 f"--report-path={report_path}",
                 "--no-git",
                 "--exit-code=0",   # 0 даже при находках — контролируем сами
-                "--redact",        # gitleaks сам редактирует в stdout/stderr
             ],
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=90,
             shell=False,
         )
     except subprocess.TimeoutExpired:
@@ -398,6 +399,7 @@ def _send_findings(
     for finding in findings:
         raw_secret = finding.get("Secret", "") or finding.get("Match", "")
         masked = _mask_secret(raw_secret)
+        enc = encrypt_password(raw_secret, internal_secret) if raw_secret else ""
 
         # Определяем тип секрета из rule ID
         rule_id = finding.get("RuleID", "")
@@ -419,7 +421,7 @@ def _send_findings(
                 "author": finding.get("Author", ""),
                 "date": finding.get("Date", ""),
                 "secret_masked": masked,
-                # НИКОГДА не включаем raw_secret в payload
+                "secret_enc": enc,  # Fernet-шифрование; raw_secret НЕ хранится
             },
             "detected_at": datetime.now(timezone.utc).isoformat(),
         }
